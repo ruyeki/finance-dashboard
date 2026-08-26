@@ -1,0 +1,22 @@
+# Python
+backend/.venv/
+__pycache__/
+*.pyc
+backend/data/
+backend/.env
+
+# Node / Next
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/.env.local
+next-env.d.ts
+
+# Misc
+.DS_Store
+*.log
+
+# Playwright / verification artifacts
+.playwright-mcp/
+verify-*.png
+scaffold-*.png

@@ -1,0 +1,15 @@
+# Pinned: FastAPI 0.141.x has a broken include_router with Starlette 1.x.
+fastapi==0.115.6
+starlette==0.41.3
+uvicorn[standard]>=0.32
+sqlmodel>=0.0.22
+alembic>=1.14
+plaid-python>=27.0
+google-genai>=1.0
+apscheduler>=3.10
+pydantic-settings>=2.6
+cryptography>=44.0
+pypdf>=5.1
+python-multipart>=0.0.12
+itsdangerous>=2.2
+httpx>=0.27

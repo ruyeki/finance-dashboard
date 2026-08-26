@@ -30,6 +30,16 @@ def networth(session: Session = Depends(get_session)) -> dict:
     return metrics.net_worth(session)
 
 
+@router.get("/networth-history")
+def networth_history(days: int = 90, session: Session = Depends(get_session)) -> list[dict]:
+    return metrics.networth_history(session, days)
+
+
+@router.get("/assets")
+def assets(session: Session = Depends(get_session)) -> dict:
+    return metrics.asset_breakdown(session)
+
+
 @router.get("/roth")
 def roth(year: int | None = None, session: Session = Depends(get_session)) -> dict | None:
     year = year or dt.date.today().year

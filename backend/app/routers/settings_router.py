@@ -14,6 +14,7 @@ router = APIRouter(prefix="/settings", tags=["settings"], dependencies=[AuthDep]
 class SettingsBody(BaseModel):
     pay_cadence: str | None = None
     pay_anchor: str | None = None
+    income_keywords: str | None = None
 
 
 class RothGoalBody(BaseModel):
@@ -43,6 +44,8 @@ def update_settings(body: SettingsBody, session: Session = Depends(get_session))
         _set(session, "pay_cadence", body.pay_cadence)
     if body.pay_anchor is not None:
         _set(session, "pay_anchor", body.pay_anchor)
+    if body.income_keywords is not None:
+        _set(session, "income_keywords", body.income_keywords)
     session.commit()
     return get_settings(session)
 

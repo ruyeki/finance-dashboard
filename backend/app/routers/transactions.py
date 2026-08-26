@@ -46,6 +46,11 @@ def update_transaction(
     if body.category is not None and body.category != txn.category:
         txn.category = body.category
         txn.category_source = CategorySource.manual
+        # Keep the transfer/income flags consistent with the chosen category so
+        # spending totals update: "Transfer"/"Income" are excluded from spend,
+        # anything else counts. (Overridden if is_transfer is sent explicitly.)
+        txn.is_transfer = body.category == "Transfer"
+        txn.is_income = body.category == "Income"
         # Remember the correction as a reusable rule.
         categorize.add_rule_from_correction(session, txn, body.category)
     if body.notes is not None:
@@ -64,3 +69,9 @@ def run_categorization(session: Session = Depends(get_session)) -> dict:
     """Batch-classify uncategorized transactions with Gemini (if configured)."""
     updated = categorize.categorize_uncategorized(session)
     return {"updated": updated}
+
+
+@router.post("/reclassify")
+def reclassify(session: Session = Depends(get_session)) -> dict:
+    """Re-run transfer detection + rules (+ Gemini) over all transactions."""
+    return categorize.reclassify_all(session)

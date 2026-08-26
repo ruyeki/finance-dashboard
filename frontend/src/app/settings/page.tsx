@@ -8,6 +8,7 @@ import { api } from "@/lib/api";
 export default function SettingsPage() {
   const [cadence, setCadence] = useState("biweekly");
   const [anchor, setAnchor] = useState("");
+  const [incomeKeywords, setIncomeKeywords] = useState("");
   const [year, setYear] = useState(new Date().getFullYear());
   const [limit, setLimit] = useState("7500");
   const [contributed, setContributed] = useState("0");
@@ -18,6 +19,7 @@ export default function SettingsPage() {
       .then((s) => {
         if (s.pay_cadence) setCadence(s.pay_cadence);
         if (s.pay_anchor) setAnchor(s.pay_anchor);
+        if (s.income_keywords) setIncomeKeywords(s.income_keywords);
       })
       .catch(() => {});
     api<{ limit: number; contributed_ytd: number } | null>("/metrics/roth")
@@ -34,9 +36,13 @@ export default function SettingsPage() {
     e.preventDefault();
     await api("/settings", {
       method: "PUT",
-      body: JSON.stringify({ pay_cadence: cadence, pay_anchor: anchor || null }),
+      body: JSON.stringify({
+        pay_cadence: cadence,
+        pay_anchor: anchor || null,
+        income_keywords: incomeKeywords,
+      }),
     });
-    setSaved("Pay schedule saved.");
+    setSaved("Saved. Re-sync or reclassify to apply to existing transactions.");
   }
 
   async function saveRoth(e: React.FormEvent) {
@@ -82,6 +88,19 @@ export default function SettingsPage() {
                 onChange={(e) => setAnchor(e.target.value)}
                 className="mt-1 w-full rounded-lg border border-line bg-panel2 px-3 py-2 text-sm text-gray-100"
               />
+            </label>
+            <label className="block text-xs text-muted">
+              Income keywords (comma-separated)
+              <input
+                value={incomeKeywords}
+                onChange={(e) => setIncomeKeywords(e.target.value)}
+                placeholder="e.g. persist, gusto"
+                className="mt-1 w-full rounded-lg border border-line bg-panel2 px-3 py-2 text-sm text-gray-100"
+              />
+              <span className="mt-1 block text-[11px] text-muted">
+                Deposits matching these (plus payroll/salary/interest) are counted as
+                income, e.g. your Persist-AI paycheck.
+              </span>
             </label>
             <button className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white">
               Save

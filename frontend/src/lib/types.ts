@@ -39,6 +39,18 @@ export interface CategorySpend {
   amount: number;
 }
 
+export interface MerchantSpend {
+  merchant: string;
+  amount: number;
+  count: number;
+}
+
+export interface SourceSpend {
+  source: string;
+  amount: number;
+  count: number;
+}
+
 export interface SpendingSummary {
   period_start: string;
   period_end: string;
@@ -49,6 +61,26 @@ export interface SpendingSummary {
   average: number;
   by_category: CategorySpend[];
   income: number;
+  days_elapsed: number;
+  days_total: number;
+  daily_avg: number;
+  projected: number;
+  savings_rate: number | null;
+  net_cash_flow: number;
+  top_category: string | null;
+  top_merchants: MerchantSpend[];
+  by_source: SourceSpend[];
+}
+
+export interface NetWorthPoint {
+  date: string;
+  net_worth: number;
+}
+
+export interface AssetBreakdown {
+  cash: number;
+  invested: number;
+  debt: number;
 }
 
 export interface TrendPoint {

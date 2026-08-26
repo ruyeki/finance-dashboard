@@ -75,6 +75,7 @@ def sync_item(session: Session, item: Item) -> dict:
     for e in errors:
         logger.info("SimpleFIN notice: %s", e)
 
+    income_keywords = categorize.get_income_keywords(session)
     accounts_seen = 0
     txns_added = 0
     holdings_count = 0
@@ -128,12 +129,28 @@ def sync_item(session: Session, item: Item) -> dict:
             existing = session.exec(
                 select(Transaction).where(Transaction.plaid_transaction_id == tid)
             ).first()
-            category, source = categorize.categorize_from_plaid(session, merchant, None, None)
-            is_income = sf_amount > 0
+            desc = t.get("description", "")
+            if sf_amount > 0:
+                # Money in: paycheck/interest = income; internal moves = transfer.
+                blob = f"{merchant} {desc}"
+                category, source, is_income, is_transfer = categorize.classify_inflow(
+                    blob, income_keywords
+                )
+            else:
+                # Money out: only auto-exclude credit-card payoffs (they'd double-
+                # count card purchases). Everything else counts under its account.
+                is_transfer = categorize.detect_card_payment(merchant) or categorize.detect_card_payment(desc)
+                is_income = False
+                if is_transfer:
+                    category, source = "Transfer", CategorySource.rule
+                else:
+                    category, source = categorize.categorize_from_plaid(session, merchant, None, None)
             if existing:
-                if existing.category_source != "manual":
+                if existing.category_source != CategorySource.manual:
                     existing.category = category
                     existing.category_source = source
+                    existing.is_transfer = is_transfer
+                    existing.is_income = is_income
                 existing.amount = -sf_amount
                 existing.pending = bool(t.get("pending"))
                 session.add(existing)
@@ -145,11 +162,12 @@ def sync_item(session: Session, item: Item) -> dict:
                         date=tdate,
                         amount=-sf_amount,
                         merchant_name=merchant,
-                        raw_name=t.get("description", ""),
+                        raw_name=desc,
                         category=category,
                         category_source=source,
                         pending=bool(t.get("pending")),
                         is_income=is_income,
+                        is_transfer=is_transfer,
                     )
                 )
                 txns_added += 1

@@ -6,6 +6,7 @@ Degrades gracefully: if GEMINI_API_KEY is unset, classification returns
 
 import json
 import logging
+from functools import lru_cache
 
 from app.categories import CATEGORIES
 from app.config import settings
@@ -17,23 +18,24 @@ def is_enabled() -> bool:
     return bool(settings.gemini_api_key)
 
 
+@lru_cache
 def _client():
+    # Cached so the client (and its underlying HTTP connection) isn't garbage
+    # collected between creation and use — a temporary would raise
+    # "Cannot send a request, as the client has been closed".
     from google import genai
 
     return genai.Client(api_key=settings.gemini_api_key)
 
 
-def classify_merchants(descriptions: list[str]) -> list[str]:
-    """Map each merchant/description string to one of CATEGORIES.
+CHUNK_SIZE = 40  # keep each response well under output-token limits
 
-    Returns "Uncategorized" for everything when Gemini is not configured.
-    """
-    if not descriptions:
-        return []
-    if not is_enabled():
-        return ["Uncategorized"] * len(descriptions)
 
-    allowed = ", ".join(c for c in CATEGORIES if c != "Uncategorized")
+_NON_SPEND_LABELS = {"Uncategorized", "Transfer", "Income", "Investments"}
+
+
+def _classify_chunk(descriptions: list[str]) -> list[str]:
+    allowed = ", ".join(c for c in CATEGORIES if c not in _NON_SPEND_LABELS)
     numbered = "\n".join(f"{i}: {d}" for i, d in enumerate(descriptions))
     prompt = (
         "You are a personal-finance transaction classifier. "
@@ -43,25 +45,42 @@ def classify_merchants(descriptions: list[str]) -> list[str]:
         "for every input line. Use the closest category; if truly unclear use "
         "\"Uncategorized\".\n\nTransactions:\n" + numbered
     )
+    resp = _client().models.generate_content(
+        model=settings.gemini_model,
+        contents=prompt,
+        config={"response_mime_type": "application/json"},
+    )
+    data = json.loads(resp.text)
+    result = ["Uncategorized"] * len(descriptions)
+    valid = set(CATEGORIES)
+    for row in data:
+        i = int(row["i"])
+        cat = row["category"]
+        if 0 <= i < len(result) and cat in valid:
+            result[i] = cat
+    return result
 
-    try:
-        resp = _client().models.generate_content(
-            model=settings.gemini_model,
-            contents=prompt,
-            config={"response_mime_type": "application/json"},
-        )
-        data = json.loads(resp.text)
-        result = ["Uncategorized"] * len(descriptions)
-        valid = set(CATEGORIES)
-        for row in data:
-            i = int(row["i"])
-            cat = row["category"]
-            if 0 <= i < len(result) and cat in valid:
-                result[i] = cat
-        return result
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("Gemini classification failed: %s", exc)
+
+def classify_merchants(descriptions: list[str]) -> list[str]:
+    """Map each merchant/description string to one of CATEGORIES.
+
+    Processes in small chunks so large batches don't overflow the response.
+    Returns "Uncategorized" for everything when Gemini is not configured.
+    """
+    if not descriptions:
+        return []
+    if not is_enabled():
         return ["Uncategorized"] * len(descriptions)
+
+    out: list[str] = []
+    for start in range(0, len(descriptions), CHUNK_SIZE):
+        chunk = descriptions[start : start + CHUNK_SIZE]
+        try:
+            out.extend(_classify_chunk(chunk))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Gemini classification failed for a chunk: %s", exc)
+            out.extend(["Uncategorized"] * len(chunk))
+    return out
 
 
 PAYSTUB_FIELDS = {

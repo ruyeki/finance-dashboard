@@ -14,6 +14,10 @@ class Settings(BaseSettings):
     # Database
     database_url: str = "sqlite:///./data/finance.db"
 
+    # Sync
+    # Minutes between automatic syncs of every connected item. 0 disables.
+    sync_interval_minutes: int = 360
+
     # Plaid
     plaid_env: str = "sandbox"
     plaid_client_id: str = ""

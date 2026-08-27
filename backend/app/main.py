@@ -1,3 +1,4 @@
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -17,12 +18,24 @@ from app.routers import (
     sync,
     transactions,
 )
+from app.services import scheduler
+
+# uvicorn attaches handlers to its own loggers only, so the root logger keeps
+# its WARNING default and the app's own INFO records - including the scheduled
+# sync - are dropped. Enable them for the `app` hierarchy alone, so third-party
+# INFO chatter (httpx, plaid) stays off.
+logging.basicConfig(format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+logging.getLogger("app").setLevel(logging.INFO)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     run_migrations()
-    yield
+    scheduler.start()
+    try:
+        yield
+    finally:
+        scheduler.shutdown()
 
 
 app = FastAPI(title="Finance Dashboard API", lifespan=lifespan)

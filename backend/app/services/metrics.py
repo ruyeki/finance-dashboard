@@ -270,6 +270,10 @@ def spending_trend(session: Session, today: dt.date, n: int = 8) -> list[dict]:
             "period_start": s.isoformat(),
             "period_end": e.isoformat(),
             "total": period_total_spend(session, s, e),
+            # The redesign stacks each column by tier: fixed and essentials
+            # barely move, so the discretionary band is what makes a period
+            # expensive. A single total cannot show that.
+            "by_tier": tier_breakdown(spending_by_category(session, s, e)),
         }
         for s, e in reversed(periods)
     ]
@@ -619,3 +623,77 @@ def flow(session: Session, today: dt.date) -> dict:
         ],
         "split2": split2,
     }
+
+
+def keep_rate_history(session: Session, today: dt.date, n: int = 12) -> list[dict]:
+    """Keep rate per period, oldest first, plus the average across them.
+
+    A period with no paycheck yields None rather than 0: no gross means the
+    rate is undefined, and plotting it as zero would invent a bad period.
+    """
+    cadence, anchor = payperiods.get_pay_config(session)
+    periods = payperiods.recent_periods(today, cadence, anchor, n)
+    out: list[dict] = []
+    for start, end in reversed(periods):
+        pay = paycheck_totals(session, start, end)
+        spend = period_total_spend(session, start, end)
+        rate = (
+            round(100 * (pay["k401"] + (pay["net"] - spend)) / pay["gross"], 1)
+            if pay["gross"] > 0
+            else None
+        )
+        out.append({"period_start": start.isoformat(), "keep_rate": rate})
+
+    rates = [p["keep_rate"] for p in out if p["keep_rate"] is not None]
+    avg = round(sum(rates) / len(rates), 1) if rates else None
+    for p in out:
+        p["average"] = avg
+    return out
+
+
+def contribution_goals(session: Session, today: dt.date, year: int) -> list[dict]:
+    """Every contribution goal for the year, with pace against the calendar.
+
+    `roth_progress` only ever returned the Roth goal, though ContributionGoal
+    was already generic over account type. The redesign shows the 401(k)
+    beside it, so this returns all of them.
+    """
+    goals = session.exec(
+        select(ContributionGoal)
+        .where(ContributionGoal.year == year)
+        .order_by(ContributionGoal.account_type)
+    ).all()
+
+    # Months elapsed, as the design's pace marker reads it: August is 8 of 12.
+    if today.year > year:
+        elapsed = 1.0
+    elif today.year < year:
+        elapsed = 0.0
+    else:
+        elapsed = today.month / 12
+
+    out: list[dict] = []
+    for g in goals:
+        pct = round(100 * g.contributed_ytd / g.limit, 1) if g.limit else 0.0
+        target = round(g.limit * elapsed, 2)
+        behind = round(target - g.contributed_ytd, 2)
+        months_left = max(12 - today.month, 0) if today.year == year else 0
+        out.append(
+            {
+                "account_type": g.account_type.value,
+                "year": year,
+                "limit": g.limit,
+                "contributed_ytd": g.contributed_ytd,
+                "remaining": round(g.limit - g.contributed_ytd, 2),
+                "percent": pct,
+                "pace_percent": round(100 * elapsed, 1),
+                "behind": behind if behind > 0 else 0.0,
+                "months_left": months_left,
+                "needed_per_month": (
+                    round((g.limit - g.contributed_ytd) / months_left, 2)
+                    if months_left > 0 and g.contributed_ytd < g.limit
+                    else 0.0
+                ),
+            }
+        )
+    return out

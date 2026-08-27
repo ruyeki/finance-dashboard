@@ -140,6 +140,14 @@ export interface TrendPoint {
   period_end: string;
   total: number;
   average: number;
+  by_tier: TierTotals;
+}
+
+export interface KeepRatePoint {
+  period_start: string;
+  /** null when the period had no paycheck: undefined, not zero. */
+  keep_rate: number | null;
+  average: number | null;
 }
 
 export interface NetWorth {
@@ -184,3 +192,17 @@ export const ACCOUNT_TYPE_LABELS: Record<AccountType, string> = {
   credit: "Credit",
   other: "Other",
 };
+
+export interface ContributionGoal {
+  account_type: string;
+  year: number;
+  limit: number;
+  contributed_ytd: number;
+  remaining: number;
+  percent: number;
+  /** Share of the year elapsed, for the pace marker. */
+  pace_percent: number;
+  behind: number;
+  months_left: number;
+  needed_per_month: number;
+}

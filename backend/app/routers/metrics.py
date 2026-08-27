@@ -68,3 +68,14 @@ def flow(session: Session = Depends(get_session)) -> dict:
 @router.get("/recurring")
 def recurring(session: Session = Depends(get_session)) -> dict:
     return metrics.recurring_charges(session, dt.date.today())
+
+
+@router.get("/keep-rate")
+def keep_rate(n: int = 12, session: Session = Depends(get_session)) -> list[dict]:
+    return metrics.keep_rate_history(session, dt.date.today(), n)
+
+
+@router.get("/goals")
+def goals(year: int | None = None, session: Session = Depends(get_session)) -> list[dict]:
+    today = dt.date.today()
+    return metrics.contribution_goals(session, today, year or today.year)

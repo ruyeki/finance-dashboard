@@ -1,162 +1,194 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import Shell from "@/components/Shell";
-import { Card, PageHeader, Stat } from "@/components/ui";
-import CategoryBreakdown from "@/components/charts/CategoryBreakdown";
-import MerchantList from "@/components/MerchantList";
+import { useEffect, useMemo, useState } from "react";
+import Shell, { useSummary } from "@/components/Shell";
+import {
+  BasisPills,
+  Module,
+  ModuleHead,
+  PageHead,
+  StatRow,
+  StatTile,
+} from "@/components/primitives";
+import { DeviationRows, MerchantRows } from "@/components/dash/rows";
+import { PaceChart } from "@/components/dash/charts";
+import { TransactionsTable } from "@/components/dash/TransactionsTable";
 import { api } from "@/lib/api";
-import { currency, shortDate, signedCurrency } from "@/lib/format";
-import { CATEGORIES } from "@/lib/categories";
-import { SpendingSummary, Transaction } from "@/lib/types";
+import {
+  currency,
+  periodLabel,
+  share,
+  signedCurrency,
+} from "@/lib/format";
+import type { SpendingSummary, Transaction } from "@/lib/types";
 
 export default function SpendingPage() {
-  const [summary, setSummary] = useState<SpendingSummary | null>(null);
+  return (
+    <Shell bare>
+      <SpendingContent />
+    </Shell>
+  );
+}
+
+function SpendingContent() {
+  const shellSummary = useSummary();
+  // Recategorising changes every tier-cut figure on this screen, so a refreshed
+  // summary can override the shell's copy. It stays null until that happens,
+  // rather than mirroring the shell into state on mount.
+  const [override, setOverride] = useState<SpendingSummary | null>(null);
   const [txns, setTxns] = useState<Transaction[]>([]);
 
-  function loadTxns(start: string, end: string) {
-    api<Transaction[]>(`/transactions?start=${start}&end=${end}&limit=300`)
-      .then(setTxns)
-      .catch(() => {});
-  }
+  const active = override ?? shellSummary;
 
-  function loadSummary() {
-    api<SpendingSummary>("/metrics/spending")
-      .then((s) => {
-        setSummary(s);
-        loadTxns(s.period_start, s.period_end);
-      })
+  useEffect(() => {
+    if (!shellSummary) return;
+    let live = true;
+    api<Transaction[]>(
+      `/transactions?start=${shellSummary.period_start}&end=${shellSummary.period_end}&limit=300`,
+    )
+      .then((t) => live && setTxns(t))
       .catch(() => {});
-  }
-
-  useEffect(loadSummary, []);
+    return () => {
+      live = false;
+    };
+  }, [shellSummary]);
 
   async function recategorize(id: number, category: string) {
-    const updated = await api<Transaction>(`/transactions/${id}`, {
-      method: "PATCH",
-      body: JSON.stringify({ category }),
-    });
-    setTxns((prev) => prev.map((t) => (t.id === id ? updated : t)));
-    api<SpendingSummary>("/metrics/spending").then(setSummary).catch(() => {});
+    try {
+      const updated = await api<Transaction>(`/transactions/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ category }),
+      });
+      setTxns((prev) => prev.map((t) => (t.id === id ? updated : t)));
+      // The tier cuts every figure on this screen, so the summary has to follow.
+      const fresh = await api<SpendingSummary>("/metrics/spending");
+      setOverride(fresh);
+    } catch {
+      /* leave the row as it was; the select still shows the server value */
+    }
   }
 
-  const deltaDown = summary ? summary.delta <= 0 : true;
+  const deviations = useMemo(() => {
+    if (!active) return [];
+    const avgs = active.category_averages ?? {};
+    return active.by_category.map((c) => ({
+      label: c.category,
+      value: c.amount,
+      average: avgs[c.category] ?? 0,
+    }));
+  }, [active]);
+
+  const biggest = useMemo(() => {
+    if (!deviations.length) return null;
+    return [...deviations].sort(
+      (a, b) => Math.abs(b.value - b.average) - Math.abs(a.value - a.average),
+    )[0];
+  }, [deviations]);
+
+  const vsAvg = active ? active.total - active.average : 0;
+  const projectedVsAvg =
+    active && active.average > 0
+      ? ((active.projected - active.average) / active.average) * 100
+      : 0;
 
   return (
-    <Shell>
-      <PageHeader
+    <>
+      <PageHead
         title="Spending"
         subtitle={
-          summary
-            ? `${shortDate(summary.period_start)} – ${shortDate(summary.period_end)} · day ${summary.days_elapsed} of ${summary.days_total}`
-            : undefined
+          active
+            ? `${periodLabel(active)} · transfers and income excluded from totals`
+            : "Loading…"
         }
+        actions={<BasisPills />}
       />
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <Stat label="Spent this period" value={summary ? currency(summary.total) : "—"} />
-        <Stat
-          label="Projected"
-          value={summary ? currency(summary.projected) : "—"}
-          hint={summary ? `${currency(summary.daily_avg)}/day` : undefined}
+      <StatRow>
+        <StatTile
+          label="Spent this period"
+          value={active ? currency(active.total) : "—"}
+          delta={active ? `${signedCurrency(vsAvg)} vs avg` : undefined}
+          deltaTone={vsAvg > 0 ? "bad" : "good"}
+          note={
+            active
+              ? `Day ${active.days_elapsed} of ${active.days_total} · ${currency(active.daily_avg)}/day`
+              : undefined
+          }
         />
-        <Stat
-          label="vs last period"
-          value={summary ? signedCurrency(summary.delta) : "—"}
-          hint={summary ? `last: ${currency(summary.previous_total)}` : undefined}
-          hintClass={deltaDown ? "text-good" : "text-bad"}
+        <StatTile
+          label="Projected finish"
+          value={active ? currency(active.projected) : "—"}
+          delta={
+            active && active.average > 0
+              ? `${projectedVsAvg >= 0 ? "+" : "−"}${Math.abs(projectedVsAvg).toFixed(0)}% vs avg`
+              : undefined
+          }
+          deltaTone={projectedVsAvg > 0 ? "bad" : "good"}
+          note="At the current daily rate"
         />
-        <Stat label="Trailing avg" value={summary ? currency(summary.average) : "—"} />
-      </div>
+        <StatTile
+          label="Discretionary left"
+          value={active ? currency(active.discretionary_left, { cents: true }) : "—"}
+          valueTone={active && active.discretionary_left < 0 ? "bad" : "fg"}
+          delta={
+            active && active.discretionary_budget > 0
+              ? `${share((active.discretionary_left / active.discretionary_budget) * 100, 0)} of ${currency(active.discretionary_budget)}`
+              : undefined
+          }
+          deltaTone={active && active.discretionary_left < 0 ? "bad" : "warn"}
+          note="Fixed and essentials are already paid"
+        />
+        <StatTile
+          label="Biggest move"
+          value={biggest ? biggest.label : "—"}
+          delta={biggest ? signedCurrency(biggest.value - biggest.average) : undefined}
+          deltaTone={biggest && biggest.value > biggest.average ? "bad" : "good"}
+          note={
+            biggest
+              ? biggest.average === 0
+                ? "Nothing here in the previous six periods"
+                : `Against a ${currency(biggest.average, { cents: true })} average`
+              : undefined
+          }
+        />
+      </StatRow>
 
-      <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <Card>
-          <h2 className="mb-4 text-sm font-medium">By source</h2>
-          <CategoryBreakdown
-            data={(summary?.by_source ?? []).map((s) => ({
-              category: s.source,
-              amount: s.amount,
-            }))}
-            emptyHint="No spending yet this period."
+      <div
+        className="grid divide-x divide-line border-b border-line"
+        style={{ gridTemplateColumns: "1.15fr 1fr" }}
+      >
+        <div className="px-8 pb-[30px] pt-[26px]">
+          <ModuleHead
+            title="Every category against its average"
+            subtitle="Bar is this period. Tick is the six-period average. Sorted by how far off you are."
           />
-        </Card>
-        <Card>
-          <h2 className="mb-4 text-sm font-medium">Top merchants</h2>
-          <MerchantList data={summary?.top_merchants ?? []} />
-        </Card>
+          <DeviationRows rows={deviations} />
+        </div>
+        <div className="px-8 pb-[30px] pt-[26px]">
+          <ModuleHead
+            title="Pace"
+            subtitle="Cumulative spend against the same day of your average period."
+          />
+          {active ? (
+            <PaceChart summary={active} transactions={txns} />
+          ) : (
+            <p className="mt-4 text-caption text-muted">Loading…</p>
+          )}
+        </div>
       </div>
 
-      <Card className="mt-4">
-        <h2 className="mb-4 text-sm font-medium">By category</h2>
-        <CategoryBreakdown
-          data={summary?.by_category ?? []}
-          emptyHint="Add a Gemini key (or categorize transactions below) to split spending into food, gas, etc."
+      <Module>
+        <ModuleHead
+          title="Transactions this period"
+          subtitle="Transfers and income are listed but excluded from spending totals. Changing a category becomes a reusable rule."
         />
-      </Card>
+        <TransactionsTable rows={txns} onRecategorize={recategorize} />
+      </Module>
 
-      <Card className="mt-4">
-        <h2 className="mb-1 text-sm font-medium">Transactions this period</h2>
-        <p className="mb-4 text-xs text-muted">
-          Transfers &amp; income are shown but excluded from spending totals. Change a
-          category and it becomes a reusable rule.
-        </p>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-left text-xs uppercase text-muted">
-                <th className="py-2 pr-4 font-medium">Date</th>
-                <th className="py-2 pr-4 font-medium">Merchant</th>
-                <th className="py-2 pr-4 font-medium">Category</th>
-                <th className="py-2 pr-4 text-right font-medium">Amount</th>
-              </tr>
-            </thead>
-            <tbody>
-              {txns.map((t) => (
-                <tr key={t.id} className="border-t border-line/60">
-                  <td className="py-2 pr-4 text-muted">{shortDate(t.date)}</td>
-                  <td className="py-2 pr-4">
-                    {t.merchant_name ?? t.raw_name}
-                    {t.is_transfer && (
-                      <span className="ml-2 rounded bg-panel2 px-1.5 py-0.5 text-[10px] text-muted">
-                        transfer
-                      </span>
-                    )}
-                  </td>
-                  <td className="py-2 pr-4">
-                    <select
-                      value={t.category}
-                      onChange={(e) => recategorize(t.id, e.target.value)}
-                      className="rounded-md border border-line bg-panel2 px-2 py-1 text-xs outline-none focus:border-accent"
-                    >
-                      {CATEGORIES.map((c) => (
-                        <option key={c} value={c}>
-                          {c}
-                        </option>
-                      ))}
-                    </select>
-                  </td>
-                  <td
-                    className={`py-2 pr-4 text-right tabular-nums ${
-                      t.is_income ? "text-good" : ""
-                    }`}
-                  >
-                    {t.is_income
-                      ? `+${currency(Math.abs(t.amount), { cents: true })}`
-                      : currency(t.amount, { cents: true })}
-                  </td>
-                </tr>
-              ))}
-              {txns.length === 0 && (
-                <tr>
-                  <td colSpan={4} className="py-6 text-center text-muted">
-                    No transactions.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </Card>
-    </Shell>
+      <Module>
+        <ModuleHead title="Top merchants" subtitle="This period, by total spent." />
+        <MerchantRows data={active?.top_merchants ?? []} limit={8} columns={2} />
+      </Module>
+    </>
   );
 }

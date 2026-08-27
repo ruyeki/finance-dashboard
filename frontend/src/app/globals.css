@@ -7,5 +7,17 @@
 }
 
 body {
-  @apply bg-ink text-gray-100 antialiased;
+  @apply bg-ink text-fg font-sans antialiased;
+}
+
+/* The flow diagram transitions ribbon opacity on hover; honour the OS setting. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

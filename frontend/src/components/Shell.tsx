@@ -1,30 +1,94 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { createContext, useContext, useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
 import { api } from "@/lib/api";
+import { daysUntil, relativeDays, weekdayDate } from "@/lib/format";
+import type { Account, Paycheck, SpendingSummary } from "@/lib/types";
 
-const NAV = [
+type NavItem = {
+  href: string;
+  label: string;
+  hint?: string;
+  countOf?: "accounts" | "paychecks";
+};
+
+const NAV: NavItem[] = [
   { href: "/", label: "Overview" },
   { href: "/spending", label: "Spending" },
   { href: "/trends", label: "Trends" },
-  { href: "/flow", label: "Money Flow" },
-  { href: "/accounts", label: "Accounts" },
-  { href: "/paychecks", label: "Paychecks" },
+  { href: "/flow", label: "Money Flow", hint: "•" },
+  { href: "/accounts", label: "Accounts", countOf: "accounts" },
+  { href: "/paychecks", label: "Paychecks", countOf: "paychecks" },
   { href: "/settings", label: "Settings" },
 ];
 
-export default function Shell({ children }: { children: React.ReactNode }) {
+/**
+ * The pay-period summary, fetched once by the Shell.
+ *
+ * Every screen shows the same period framing in its subtitle and most of them
+ * need the same figures, so fetching it per-page would mean four identical
+ * requests on every navigation.
+ */
+const SummaryContext = createContext<SpendingSummary | null>(null);
+
+export function useSummary(): SpendingSummary | null {
+  return useContext(SummaryContext);
+}
+
+/**
+ * `bare` drops the default page padding. Redesigned screens set it, because
+ * their `PageHead` / `Module` primitives are full-bleed and carry their own
+ * 32px gutters; the screens still on the old `Card` layout keep the padding.
+ */
+export default function Shell({
+  children,
+  bare = false,
+}: {
+  children: React.ReactNode;
+  bare?: boolean;
+}) {
   const router = useRouter();
   const pathname = usePathname();
   const [ready, setReady] = useState(false);
+  const [summary, setSummary] = useState<SpendingSummary | null>(null);
+  const [counts, setCounts] = useState<{ accounts?: number; paychecks?: number }>({});
+  const [env, setEnv] = useState<string | null>(null);
 
   useEffect(() => {
     api("/auth/me")
       .then(() => setReady(true))
+      // Preserved from the original: any failure sends you to /login. This
+      // cannot tell a 401 from a network error, which is a known wart — left
+      // as-is so the redesign does not quietly change auth behaviour.
       .catch(() => router.replace("/login"));
   }, [router]);
+
+  // Sidebar furniture. Each piece degrades on its own: a failed count just
+  // hides that badge rather than blanking the nav.
+  useEffect(() => {
+    if (!ready) return;
+    let live = true;
+    void (async () => {
+      const [s, a, p, h] = await Promise.allSettled([
+        api<SpendingSummary>("/metrics/spending"),
+        api<Account[]>("/accounts"),
+        api<Paycheck[]>("/paychecks"),
+        api<{ plaid_env?: string }>("/health"),
+      ]);
+      if (!live) return;
+      if (s.status === "fulfilled") setSummary(s.value);
+      setCounts({
+        accounts: a.status === "fulfilled" ? a.value.length : undefined,
+        paychecks: p.status === "fulfilled" ? p.value.length : undefined,
+      });
+      if (h.status === "fulfilled" && h.value.plaid_env) setEnv(h.value.plaid_env);
+    })();
+    return () => {
+      live = false;
+    };
+  }, [ready]);
 
   async function logout() {
     await api("/auth/logout", { method: "POST" });
@@ -39,42 +103,76 @@ export default function Shell({ children }: { children: React.ReactNode }) {
     );
   }
 
+  const payday = summary?.period_end;
+
   return (
-    <div className="flex min-h-screen">
-      <aside className="flex w-56 shrink-0 flex-col border-r border-line bg-panel px-3 py-6">
-        <div className="px-3 pb-6">
-          <div className="text-sm font-semibold">Finance</div>
-          <div className="text-xs text-muted">Dashboard</div>
-        </div>
-        <nav className="flex flex-1 flex-col gap-1">
-          {NAV.map((item) => {
-            const active =
-              item.href === "/"
-                ? pathname === "/"
-                : pathname.startsWith(item.href);
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                className={`rounded-lg px-3 py-2 text-sm transition ${
-                  active
-                    ? "bg-panel2 text-white"
-                    : "text-muted hover:bg-panel2 hover:text-white"
-                }`}
-              >
-                {item.label}
-              </Link>
-            );
-          })}
-        </nav>
-        <button
-          onClick={logout}
-          className="mt-4 rounded-lg px-3 py-2 text-left text-sm text-muted hover:bg-panel2 hover:text-white"
-        >
-          Sign out
-        </button>
-      </aside>
-      <main className="flex-1 overflow-x-hidden px-8 py-8">{children}</main>
-    </div>
+    <SummaryContext.Provider value={summary}>
+      <div className="flex min-h-screen">
+        <aside className="flex w-52 shrink-0 flex-col border-r border-line py-[26px]">
+          <div className="px-5 pb-6">
+            <div className="text-h2 font-semibold text-fg">Finance</div>
+            <div className="mt-0.5 font-mono text-micro uppercase text-muted">
+              {env ? `${env} · USD` : "USD"}
+            </div>
+          </div>
+
+          <nav className="flex flex-col">
+            {NAV.map((item) => {
+              const active =
+                item.href === "/"
+                  ? pathname === "/"
+                  : pathname.startsWith(item.href);
+              const badge =
+                item.hint ??
+                (item.countOf ? counts[item.countOf]?.toString() : undefined);
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  aria-current={active ? "page" : undefined}
+                  className={`flex items-center justify-between border-l-2 py-[9px] pl-[18px] pr-5 text-body transition-colors ${
+                    active
+                      ? "border-accent bg-[#171b23] text-fg"
+                      : "border-transparent text-muted hover:text-fg"
+                  }`}
+                >
+                  <span>{item.label}</span>
+                  {badge && (
+                    <span className="font-mono text-eyebrow text-dim">{badge}</span>
+                  )}
+                </Link>
+              );
+            })}
+          </nav>
+
+          {payday && (
+            <div className="mx-5 mt-6 border-t border-line pt-4">
+              <div className="font-mono text-eyebrow uppercase text-muted">
+                Next payday
+              </div>
+              <div className="mt-1.5 text-body text-fg">
+                {weekdayDate(payday)} · {relativeDays(daysUntil(payday))}
+              </div>
+              {/*
+                "$N discretionary left" belongs here per the design, but it needs
+                the tier map and the per-period discretionary budget, which are
+                Phase 2 backend work. Omitted rather than faked.
+              */}
+            </div>
+          )}
+
+          <div className="flex-1" />
+
+          <button
+            onClick={logout}
+            className="px-5 py-2 text-left text-body text-muted transition-colors hover:text-fg"
+          >
+            Sign out
+          </button>
+        </aside>
+
+        <main className={`min-w-0 flex-1 ${bare ? "" : "px-8 py-8"}`}>{children}</main>
+      </div>
+    </SummaryContext.Provider>
   );
 }

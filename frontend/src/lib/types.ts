@@ -70,6 +70,58 @@ export interface SpendingSummary {
   top_category: string | null;
   top_merchants: MerchantSpend[];
   by_source: SourceSpend[];
+  // Added by the redesign. Every figure below is cut by tier.
+  by_tier: TierTotals;
+  /** Per-category average over 6 complete prior periods, truncated to the same
+   *  day of the period so a mid-period comparison is like-for-like. */
+  category_averages: Record<string, number>;
+  tier_averages: TierTotals;
+  discretionary_budget: number;
+  discretionary_spent: number;
+  discretionary_left: number;
+  /** (401k + cash kept) / gross. Displayed as "savings rate". */
+  keep_rate: number | null;
+  gross: number;
+  take_home: number;
+}
+
+export type Tier = "fixed" | "essential" | "discretionary" | "excluded";
+
+export type TierTotals = Record<Tier, number>;
+
+export interface FlowNode {
+  key: string;
+  label: string;
+  value: number;
+  avg?: number;
+  detail?: { tax: number; insurance: number };
+  children?: { name: string; value: number; avg: number }[];
+}
+
+/** Two-split money flow. `split2` sums to take-home to the cent; `split1` to gross. */
+export interface FlowData {
+  period_start: string;
+  period_end: string;
+  days_elapsed: number;
+  days_total: number;
+  gross: number;
+  split1: FlowNode[];
+  split2: FlowNode[];
+}
+
+export interface RecurringItem {
+  merchant: string;
+  amount: number;
+  category: string;
+  cadence: string;
+  last_date: string;
+  hits: number;
+}
+
+export interface RecurringCharges {
+  monthly_total: number;
+  annual_total: number;
+  items: RecurringItem[];
 }
 
 export interface NetWorthPoint {

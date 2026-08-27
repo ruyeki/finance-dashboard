@@ -1,6 +1,7 @@
 """Aggregation queries for dashboards: spending, trends, net worth, Sankey."""
 
 import datetime as dt
+import statistics
 
 from sqlalchemy import func
 from sqlmodel import Session, select
@@ -12,6 +13,14 @@ from app.models import (
     ContributionGoal,
     Paycheck,
     Transaction,
+)
+from app.categories import (
+    DISCRETIONARY,
+    ESSENTIAL,
+    EXCLUDED,
+    FIXED,
+    TIER_LABELS,
+    tier_for,
 )
 from app.services import payperiods
 
@@ -140,8 +149,11 @@ def spending_summary(session: Session, today: dt.date) -> dict:
     total = period_total_spend(session, start, end)
     prev_total = period_total_spend(session, prev_start, prev_end)
 
-    periods = payperiods.recent_periods(today, cadence, anchor, 6)
-    past_totals = [period_total_spend(session, s, e) for s, e in periods[1:]]
+    # Six *complete* prior periods. This previously asked for 6 and then
+    # dropped the current one, averaging five while calling it a six-period
+    # average -- the figure the whole redesign compares against.
+    prior = past_periods(session, today, 6)
+    past_totals = [period_total_spend(session, s, e) for s, e in prior]
     avg = round(sum(past_totals) / len(past_totals), 2) if past_totals else 0.0
 
     income = period_income(session, start, end)
@@ -152,6 +164,22 @@ def spending_summary(session: Session, today: dt.date) -> dict:
     savings_rate = round(100 * (income - total) / income, 1) if income > 0 else None
 
     by_cat = spending_by_category(session, start, end)
+    by_tier = tier_breakdown(by_cat)
+    cat_avgs = category_averages(session, today, 6, to_day=days_elapsed)
+    tier_avgs = tier_breakdown(
+        [{"category": c, "amount": a} for c, a in cat_avgs.items()]
+    )
+    budget = discretionary_budget(session)
+    disc_spent = by_tier[DISCRETIONARY]
+
+    # The redesign's headline measure: the share of gross that stays yours --
+    # 401(k) plus whatever cash survived. Displayed as "savings rate".
+    pay = paycheck_totals(session, start, end)
+    keep_rate = (
+        round(100 * (pay["k401"] + (pay["net"] - total)) / pay["gross"], 1)
+        if pay["gross"] > 0
+        else None
+    )
 
     return {
         "period_start": start.isoformat(),
@@ -172,6 +200,15 @@ def spending_summary(session: Session, today: dt.date) -> dict:
         "top_category": by_cat[0]["category"] if by_cat else None,
         "top_merchants": top_merchants(session, start, end, 8),
         "by_source": spending_by_source(session, start, end),
+        "by_tier": by_tier,
+        "category_averages": cat_avgs,
+        "tier_averages": tier_avgs,
+        "discretionary_budget": budget,
+        "discretionary_spent": disc_spent,
+        "discretionary_left": round(budget - disc_spent, 2),
+        "keep_rate": keep_rate,
+        "gross": pay["gross"],
+        "take_home": pay["net"],
     }
 
 
@@ -341,3 +378,244 @@ def sankey(session: Session, start: dt.date, end: dt.date) -> dict:
         total_spend += row["amount"]
 
     return {"nodes": [{"name": n} for n in nodes], "links": links}
+
+
+# --- Tiers, averages, and the two-split flow --------------------------------
+
+
+def past_periods(
+    session: Session, today: dt.date, n: int = 6
+) -> list[tuple[dt.date, dt.date]]:
+    """The `n` complete periods *before* the one containing `today`."""
+    cadence, anchor = payperiods.get_pay_config(session)
+    return payperiods.recent_periods(today, cadence, anchor, n + 1)[1:]
+
+
+def tier_breakdown(by_category: list[dict]) -> dict[str, float]:
+    """Fold a category breakdown into tier totals.
+
+    Excluded categories are kept under `excluded` rather than dropped, so a
+    caller can still reconcile the parts against the whole.
+    """
+    out = {FIXED: 0.0, ESSENTIAL: 0.0, DISCRETIONARY: 0.0, EXCLUDED: 0.0}
+    for row in by_category:
+        out[tier_for(row["category"])] += row["amount"]
+    return {k: round(v, 2) for k, v in out.items()}
+
+
+def category_averages(
+    session: Session, today: dt.date, n: int = 6, to_day: int | None = None
+) -> dict[str, float]:
+    """Per-category average over the `n` complete periods before this one.
+
+    `to_day` truncates each past period to its first N days. Mid-period that is
+    the only honest comparison: day 11 against day 11, not day 11 against a
+    finished period.
+    """
+    periods = past_periods(session, today, n)
+    if not periods:
+        return {}
+    totals: dict[str, float] = {}
+    for start, end in periods:
+        stop = min(start + dt.timedelta(days=to_day), end) if to_day else end
+        for row in spending_by_category(session, start, stop):
+            totals[row["category"]] = totals.get(row["category"], 0.0) + row["amount"]
+    return {c: round(v / len(periods), 2) for c, v in totals.items()}
+
+
+def tier_averages(
+    session: Session, today: dt.date, n: int = 6, to_day: int | None = None
+) -> dict[str, float]:
+    avgs = category_averages(session, today, n, to_day)
+    return tier_breakdown([{"category": c, "amount": a} for c, a in avgs.items()])
+
+
+def discretionary_budget(session: Session) -> float:
+    """Per-period discretionary allowance. A single user-set number."""
+    raw = payperiods.get_setting(session, "discretionary_budget", "600")
+    try:
+        return max(float(raw), 0.0)
+    except ValueError:
+        return 600.0
+
+
+def recurring_charges(
+    session: Session, today: dt.date, lookback_days: int = 190, min_hits: int = 3
+) -> dict:
+    """Charges that repeat monthly at a stable amount.
+
+    Deliberately conservative: a merchant qualifies only with at least
+    `min_hits` charges, a median gap in the monthly range, and an amount that
+    barely moves. A merchant you merely visit every month has a swinging
+    amount and is rejected.
+    """
+    start = today - dt.timedelta(days=lookback_days)
+    stmt = _spend_filter(
+        select(
+            Transaction.merchant_name,
+            Transaction.date,
+            Transaction.amount,
+            Transaction.category,
+        ).where(Transaction.date >= start, Transaction.date < today)
+    )
+    groups: dict[str, list[tuple[dt.date, float, str]]] = {}
+    for name, date, amount, category in session.exec(stmt).all():
+        key = (name or "").strip()
+        if key:
+            groups.setdefault(key, []).append((date, float(amount), category))
+
+    items: list[dict] = []
+    for name, hits in groups.items():
+        if len(hits) < min_hits:
+            continue
+        hits.sort(key=lambda h: h[0])
+        gaps = [(hits[i][0] - hits[i - 1][0]).days for i in range(1, len(hits))]
+        if not gaps or not 24 <= statistics.median(gaps) <= 38:
+            continue
+        amounts = [h[1] for h in hits]
+        typical = statistics.median(amounts)
+        if typical <= 0 or (max(amounts) - min(amounts)) > 0.25 * typical:
+            continue
+        items.append(
+            {
+                "merchant": name,
+                "amount": round(typical, 2),
+                "category": hits[-1][2],
+                "cadence": "monthly",
+                "last_date": hits[-1][0].isoformat(),
+                "hits": len(hits),
+            }
+        )
+
+    items.sort(key=lambda i: i["amount"], reverse=True)
+    monthly = round(sum(i["amount"] for i in items), 2)
+    return {
+        "monthly_total": monthly,
+        "annual_total": round(monthly * 12, 2),
+        "items": items,
+    }
+
+
+def paycheck_totals(session: Session, start: dt.date, end: dt.date) -> dict:
+    """Paycheck components for a period. Gross, net and 401(k) drive the keep
+    rate; tax and insurance are the detail behind "withheld"."""
+    rows = session.exec(
+        select(Paycheck).where(Paycheck.pay_date >= start, Paycheck.pay_date < end)
+    ).all()
+    return {
+        "gross": round(sum(p.gross for p in rows), 2),
+        "net": round(sum(p.net for p in rows), 2),
+        "k401": round(sum(p.retirement_401k for p in rows), 2),
+        "tax": round(
+            sum(
+                p.federal_tax + p.state_tax + p.social_security + p.medicare
+                for p in rows
+            ),
+            2,
+        ),
+        "insurance": round(sum(p.insurance for p in rows), 2),
+    }
+
+
+def flow(session: Session, today: dt.date) -> dict:
+    """Gross pay split twice: into withheld / 401(k) / take-home, then take-home
+    into what it was committed to and what survived.
+
+    The old `sankey` computed a spending total and threw it away, so take-home
+    never balanced against its outflows. Here `kept` is the explicit residual,
+    which is what makes "nothing unaccounted for" a checkable claim.
+    """
+    cadence, anchor = payperiods.get_pay_config(session)
+    start, end = payperiods.period_for_date(today, cadence, anchor)
+    days_total = max((end - start).days, 1)
+    days_elapsed = min(max((today - start).days + 1, 1), days_total)
+
+    pay = paycheck_totals(session, start, end)
+    gross, takehome, k401 = pay["gross"], pay["net"], pay["k401"]
+    tax, insurance = pay["tax"], pay["insurance"]
+    # Taken as the residual so split 1 sums to gross to the cent even when a
+    # paystub's own components do not reconcile. `detail` carries the parts.
+    withheld = round(gross - k401 - takehome, 2)
+
+    by_cat = spending_by_category(session, start, end)
+    tiers = tier_breakdown(by_cat)
+    spend_total = round(sum(r["amount"] for r in by_cat), 2)
+    kept = round(takehome - spend_total, 2)
+
+    avg_cat = category_averages(session, today, 6, to_day=days_elapsed)
+    avg_tiers = tier_breakdown(
+        [{"category": c, "amount": a} for c, a in avg_cat.items()]
+    )
+    avg_spend_total = round(sum(avg_cat.values()), 2)
+    # Same take-home, average spending: this is what makes the shortfall in
+    # "kept" exactly equal this period's overspend.
+    avg_kept = round(takehome - avg_spend_total, 2)
+
+    children = sorted(
+        (
+            {
+                "name": r["category"],
+                "value": r["amount"],
+                "avg": avg_cat.get(r["category"], 0.0),
+            }
+            for r in by_cat
+            if tier_for(r["category"]) == DISCRETIONARY
+        ),
+        key=lambda c: c["value"],
+        reverse=True,
+    )
+
+    split2 = [
+        {
+            "key": FIXED,
+            "label": TIER_LABELS[FIXED],
+            "value": tiers[FIXED],
+            "avg": avg_tiers[FIXED],
+        },
+        {
+            "key": ESSENTIAL,
+            "label": TIER_LABELS[ESSENTIAL],
+            "value": tiers[ESSENTIAL],
+            "avg": avg_tiers[ESSENTIAL],
+        },
+        {
+            "key": DISCRETIONARY,
+            "label": TIER_LABELS[DISCRETIONARY],
+            "value": tiers[DISCRETIONARY],
+            "avg": avg_tiers[DISCRETIONARY],
+            "children": children,
+        },
+    ]
+    # Only present when excluded-category spending actually happened. Without
+    # it those dollars would silently inflate "kept in cash".
+    if tiers[EXCLUDED] > 0.005:
+        split2.append(
+            {
+                "key": "unclassified",
+                "label": "Taxes & fees",
+                "value": tiers[EXCLUDED],
+                "avg": avg_tiers[EXCLUDED],
+            }
+        )
+    split2.append(
+        {"key": "kept", "label": "Kept in cash", "value": kept, "avg": avg_kept}
+    )
+
+    return {
+        "period_start": start.isoformat(),
+        "period_end": end.isoformat(),
+        "days_elapsed": days_elapsed,
+        "days_total": days_total,
+        "gross": gross,
+        "split1": [
+            {
+                "key": "withheld",
+                "label": "Withheld",
+                "value": withheld,
+                "detail": {"tax": tax, "insurance": insurance},
+            },
+            {"key": "k401", "label": "401(k)", "value": k401},
+            {"key": "takehome", "label": "Take-home", "value": takehome},
+        ],
+        "split2": split2,
+    }

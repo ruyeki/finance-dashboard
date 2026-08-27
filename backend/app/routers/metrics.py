@@ -56,3 +56,15 @@ def sankey(
         cadence, anchor = payperiods.get_pay_config(session)
         start, end = payperiods.period_for_date(dt.date.today(), cadence, anchor)
     return metrics.sankey(session, start, end)
+
+
+@router.get("/flow")
+def flow(session: Session = Depends(get_session)) -> dict:
+    """Two-split money flow. Replaces /sankey, which mixed denominators and
+    dropped the remainder so take-home never balanced."""
+    return metrics.flow(session, dt.date.today())
+
+
+@router.get("/recurring")
+def recurring(session: Session = Depends(get_session)) -> dict:
+    return metrics.recurring_charges(session, dt.date.today())

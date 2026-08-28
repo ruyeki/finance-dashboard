@@ -1,5 +1,7 @@
-export const API_URL =
-  process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8787";
+// Same-origin by default: requests hit /api/* on whatever host served the page,
+// and Next rewrites them to the backend (see next.config.mjs). Override only to
+// point at a backend on a different origin.
+export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "/api";
 
 export class ApiError extends Error {
   status: number;

@@ -17,7 +17,8 @@ from sqlmodel import Session
 
 from app.config import settings
 from app.db import engine
-from app.services import sync_manager
+from app.models import AccountType
+from app.services import holdings, sync_manager
 
 logger = logging.getLogger(__name__)
 
@@ -42,37 +43,90 @@ def run_sync() -> None:
         logger.exception("Scheduled sync failed: %s", exc)
 
 
+def run_revalue_daily() -> None:
+    """Reprice all investment holdings (mutual funds price once daily) and, on
+    paydays, auto-invest scheduled contributions (e.g. the 401k)."""
+    try:
+        with Session(engine) as session:
+            r = holdings.revalue(session)
+            c = holdings.apply_scheduled_contributions(session)
+        logger.info("Daily revalue: %s; contributions: %s", r, c)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Daily revalue failed: %s", exc)
+
+
+def run_revalue_brokerage() -> None:
+    """Reprice brokerage holdings only (ETFs/stocks move intraday)."""
+    try:
+        with Session(engine) as session:
+            r = holdings.revalue(session, [AccountType.brokerage])
+        logger.info("Hourly brokerage revalue: %s", r)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Brokerage revalue failed: %s", exc)
+
+
 def start() -> None:
-    """Start the sync job unless it is disabled or already running."""
+    """Start the sync + revalue jobs unless disabled or already running."""
     global _scheduler
 
-    minutes = settings.sync_interval_minutes
-    if minutes <= 0:
-        logger.info("Scheduled sync disabled (sync_interval_minutes=%s).", minutes)
-        return
     if _scheduler is not None:
         return
 
     scheduler = BackgroundScheduler()
-    scheduler.add_job(
-        run_sync,
-        trigger="interval",
-        minutes=minutes,
-        id=JOB_ID,
-        # One sync at a time: a run that outlives its interval must not overlap
-        # itself and fight for SQLite's single write lock.
-        max_instances=1,
-        # If the machine slept through several intervals, run once on wake
-        # instead of once per interval missed.
-        coalesce=True,
-        misfire_grace_time=300,
-        replace_existing=True,
-    )
+
+    minutes = settings.sync_interval_minutes
+    if minutes > 0:
+        scheduler.add_job(
+            run_sync,
+            trigger="interval",
+            minutes=minutes,
+            id=JOB_ID,
+            # One sync at a time: a run that outlives its interval must not overlap
+            # itself and fight for SQLite's single write lock.
+            max_instances=1,
+            # If the machine slept through several intervals, run once on wake
+            # instead of once per interval missed.
+            coalesce=True,
+            misfire_grace_time=300,
+            replace_existing=True,
+        )
+        logger.info("Scheduled sync every %s minute(s).", minutes)
+    else:
+        logger.info("Scheduled sync disabled (sync_interval_minutes=%s).", minutes)
+
+    if settings.holdings_revalue_hours > 0:
+        scheduler.add_job(
+            run_revalue_daily,
+            trigger="interval",
+            hours=settings.holdings_revalue_hours,
+            id="revalue_daily",
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=600,
+            replace_existing=True,
+        )
+    if settings.brokerage_revalue_minutes > 0:
+        scheduler.add_job(
+            run_revalue_brokerage,
+            trigger="interval",
+            minutes=settings.brokerage_revalue_minutes,
+            id="revalue_brokerage",
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=300,
+            replace_existing=True,
+        )
+
+    if not scheduler.get_jobs():
+        logger.info("No scheduled jobs enabled.")
+        return
     scheduler.start()
     _scheduler = scheduler
-    # First run lands one interval from now, not at boot: syncing on startup
-    # would hit the providers on every `--reload`.
-    logger.info("Scheduled sync every %s minute(s).", minutes)
+    logger.info(
+        "Revalue jobs: holdings every %sh, brokerage every %sm.",
+        settings.holdings_revalue_hours,
+        settings.brokerage_revalue_minutes,
+    )
 
 
 def shutdown() -> None:

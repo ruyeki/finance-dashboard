@@ -15,6 +15,7 @@ from app.routers import (
     plaid,
     settings_router,
     simplefin,
+    stocks,
     sync,
     transactions,
 )
@@ -58,6 +59,7 @@ app.include_router(transactions.router)
 app.include_router(paychecks.router)
 app.include_router(metrics.router)
 app.include_router(settings_router.router)
+app.include_router(stocks.router)
 
 
 @app.get("/health")

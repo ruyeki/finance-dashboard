@@ -17,6 +17,10 @@ class Settings(BaseSettings):
     # Sync
     # Minutes between automatic syncs of every connected item. 0 disables.
     sync_interval_minutes: int = 360
+    # Reprice investment holdings from live market data. Mutual funds (401k/Roth)
+    # only need daily NAV; brokerage ETFs/stocks are repriced hourly. 0 disables.
+    holdings_revalue_hours: int = 24
+    brokerage_revalue_minutes: int = 60
 
     # Plaid
     plaid_env: str = "sandbox"

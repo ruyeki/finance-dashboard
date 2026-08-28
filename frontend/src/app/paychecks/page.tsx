@@ -1,10 +1,26 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Shell from "@/components/Shell";
-import { Card, PageHeader } from "@/components/ui";
+import {
+  Module,
+  ModuleHead,
+  PageHead,
+  StatRow,
+  StatTile,
+} from "@/components/primitives";
+import {
+  Button,
+  Chip,
+  EmptyRow,
+  Field,
+  Input,
+  Row,
+  RowAction,
+  Table,
+} from "@/components/dash/controls";
 import { api, API_URL, ApiError } from "@/lib/api";
-import { currency, shortDate } from "@/lib/format";
+import { currency, share, shortDate } from "@/lib/format";
 import { Paycheck } from "@/lib/types";
 
 const EMPTY = {
@@ -20,11 +36,25 @@ const EMPTY = {
   employer: "",
 };
 
+const FIELDS = [
+  ["gross", "Gross"],
+  ["federal_tax", "Federal tax"],
+  ["state_tax", "State tax"],
+  ["social_security", "Social Security"],
+  ["medicare", "Medicare"],
+  ["insurance", "Insurance"],
+  ["retirement_401k", "401(k)"],
+  ["net", "Net"],
+] as const;
+
+const COLS = "96px 1fr 120px 120px 110px 110px 130px 110px 70px";
+
 export default function PaychecksPage() {
   const [paychecks, setPaychecks] = useState<Paycheck[]>([]);
   const [showManual, setShowManual] = useState(false);
   const [form, setForm] = useState({ ...EMPTY });
   const [msg, setMsg] = useState<string | null>(null);
+  const [msgTone, setMsgTone] = useState<"muted" | "good" | "bad">("muted");
   const fileRef = useRef<HTMLInputElement>(null);
 
   function load() {
@@ -36,6 +66,7 @@ export default function PaychecksPage() {
     const file = e.target.files?.[0];
     if (!file) return;
     setMsg("Parsing paystub…");
+    setMsgTone("muted");
     const body = new FormData();
     body.append("file", file);
     try {
@@ -48,10 +79,12 @@ export default function PaychecksPage() {
         const j = await res.json().catch(() => ({}));
         throw new ApiError(res.status, j.detail ?? "Upload failed");
       }
-      setMsg("Parsed! Review the values below.");
+      setMsg("Parsed. Check the values below before relying on them.");
+      setMsgTone("good");
       load();
     } catch (err) {
       setMsg(err instanceof ApiError ? err.message : "Upload failed");
+      setMsgTone("bad");
     } finally {
       if (fileRef.current) fileRef.current.value = "";
     }
@@ -89,25 +122,27 @@ export default function PaychecksPage() {
   const taxes = (p: Paycheck) =>
     p.federal_tax + p.state_tax + p.social_security + p.medicare;
 
+  const totals = useMemo(() => {
+    const gross = paychecks.reduce((s, p) => s + p.gross, 0);
+    const withheld = paychecks.reduce((s, p) => s + taxes(p) + p.insurance, 0);
+    const k401 = paychecks.reduce((s, p) => s + p.retirement_401k, 0);
+    const net = paychecks.reduce((s, p) => s + p.net, 0);
+    return { gross, withheld, k401, net };
+  }, [paychecks]);
+
   return (
-    <Shell>
-      <PageHeader
+    <Shell bare>
+      <PageHead
         title="Paychecks"
-        subtitle="Upload a Gusto paystub PDF, or add one manually"
+        subtitle="Gross pay is the denominator for every share on the dashboard, so these drive the flow diagram."
         actions={
           <div className="flex gap-2">
-            <button
-              onClick={() => fileRef.current?.click()}
-              className="rounded-lg bg-accent px-3 py-2 text-sm font-medium text-white"
-            >
+            <Button variant="primary" onClick={() => fileRef.current?.click()}>
               Upload paystub PDF
-            </button>
-            <button
-              onClick={() => setShowManual((v) => !v)}
-              className="rounded-lg border border-line px-3 py-2 text-sm"
-            >
+            </Button>
+            <Button onClick={() => setShowManual((v) => !v)}>
               {showManual ? "Cancel" : "Add manually"}
-            </button>
+            </Button>
             <input
               ref={fileRef}
               type="file"
@@ -119,109 +154,153 @@ export default function PaychecksPage() {
         }
       />
 
-      {msg && <p className="mb-4 text-sm text-muted">{msg}</p>}
+      <StatRow>
+        <StatTile
+          label="Paychecks"
+          value={String(paychecks.length)}
+          note="On record"
+        />
+        <StatTile label="Gross" value={currency(totals.gross)} note="Before anything comes out" />
+        <StatTile
+          label="Withheld"
+          value={currency(totals.withheld)}
+          valueTone={totals.withheld > 0 ? "bad" : "fg"}
+          delta={
+            totals.gross > 0
+              ? share((totals.withheld / totals.gross) * 100)
+              : undefined
+          }
+          deltaTone="bad"
+          note="Tax plus insurance"
+        />
+        <StatTile
+          label="Take-home"
+          value={currency(totals.net)}
+          valueTone="good"
+          delta={
+            totals.gross > 0 ? share((totals.net / totals.gross) * 100) : undefined
+          }
+          deltaTone="good"
+          note={`${currency(totals.k401)} into the 401(k) on top`}
+        />
+      </StatRow>
+
+      {msg && (
+        <div className="border-b border-line px-8 py-3">
+          <p
+            className={`text-caption ${
+              msgTone === "good"
+                ? "text-good"
+                : msgTone === "bad"
+                  ? "text-bad"
+                  : "text-muted"
+            }`}
+          >
+            {msg}
+          </p>
+        </div>
+      )}
 
       {showManual && (
-        <Card className="mb-4">
-          <form onSubmit={addManual} className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <label className="text-xs text-muted">
-              Pay date
-              <input
+        <Module>
+          <ModuleHead
+            title="Add a paycheck"
+            subtitle="Net is stored as given rather than derived, so a stub that does not reconcile still records faithfully."
+          />
+          <form onSubmit={addManual} className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-4">
+            <Field label="Pay date">
+              <Input
                 type="date"
                 value={form.pay_date}
                 onChange={(e) => setForm({ ...form, pay_date: e.target.value })}
-                className="mt-1 w-full rounded-lg border border-line bg-panel2 px-2 py-1.5 text-sm text-gray-100"
               />
-            </label>
-            {(
-              [
-                ["gross", "Gross"],
-                ["federal_tax", "Federal tax"],
-                ["state_tax", "State tax"],
-                ["social_security", "Social Security"],
-                ["medicare", "Medicare"],
-                ["insurance", "Insurance"],
-                ["retirement_401k", "401(k)"],
-                ["net", "Net"],
-              ] as const
-            ).map(([key, label]) => (
-              <label key={key} className="text-xs text-muted">
-                {label}
-                <input
+            </Field>
+            {FIELDS.map(([key, label]) => (
+              <Field key={key} label={label}>
+                <Input
                   type="number"
                   step="0.01"
+                  placeholder="0.00"
                   value={form[key]}
                   onChange={(e) => setForm({ ...form, [key]: e.target.value })}
-                  className="mt-1 w-full rounded-lg border border-line bg-panel2 px-2 py-1.5 text-sm text-gray-100"
                 />
-              </label>
+              </Field>
             ))}
-            <label className="text-xs text-muted">
-              Employer
-              <input
+            <Field label="Employer">
+              <Input
                 value={form.employer}
                 onChange={(e) => setForm({ ...form, employer: e.target.value })}
-                className="mt-1 w-full rounded-lg border border-line bg-panel2 px-2 py-1.5 text-sm text-gray-100"
               />
-            </label>
+            </Field>
             <div className="col-span-2 flex items-end sm:col-span-4">
-              <button className="rounded-lg bg-good px-4 py-2 text-sm font-medium text-black">
+              <Button type="submit" variant="primary">
                 Save paycheck
-              </button>
+              </Button>
             </div>
           </form>
-        </Card>
+        </Module>
       )}
 
-      <Card>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-left text-xs uppercase text-muted">
-                <th className="py-2 pr-4 font-medium">Pay date</th>
-                <th className="py-2 pr-4 font-medium">Employer</th>
-                <th className="py-2 pr-4 text-right font-medium">Gross</th>
-                <th className="py-2 pr-4 text-right font-medium">Taxes</th>
-                <th className="py-2 pr-4 text-right font-medium">Insurance</th>
-                <th className="py-2 pr-4 text-right font-medium">401(k)</th>
-                <th className="py-2 pr-4 text-right font-medium">Net</th>
-                <th className="py-2 pr-4 font-medium">Source</th>
-                <th className="py-2 pr-4"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {paychecks.map((p) => (
-                <tr key={p.id} className="border-t border-line/60">
-                  <td className="py-2 pr-4">{shortDate(p.pay_date)}</td>
-                  <td className="py-2 pr-4 text-muted">{p.employer ?? "—"}</td>
-                  <td className="py-2 pr-4 text-right tabular-nums">{currency(p.gross, { cents: true })}</td>
-                  <td className="py-2 pr-4 text-right tabular-nums text-bad">−{currency(taxes(p), { cents: true })}</td>
-                  <td className="py-2 pr-4 text-right tabular-nums text-bad">−{currency(p.insurance, { cents: true })}</td>
-                  <td className="py-2 pr-4 text-right tabular-nums text-accent">{currency(p.retirement_401k, { cents: true })}</td>
-                  <td className="py-2 pr-4 text-right font-medium tabular-nums text-good">{currency(p.net, { cents: true })}</td>
-                  <td className="py-2 pr-4">
-                    <span className="rounded-full bg-panel2 px-2 py-0.5 text-xs text-muted">
-                      {p.parsed_by === "ai" ? "AI-parsed" : "Manual"}
-                    </span>
-                  </td>
-                  <td className="py-2 pr-4 text-right">
-                    <button onClick={() => remove(p.id)} className="text-xs text-bad hover:underline">
-                      Delete
-                    </button>
-                  </td>
-                </tr>
-              ))}
-              {paychecks.length === 0 && (
-                <tr>
-                  <td colSpan={9} className="py-6 text-center text-muted">
-                    No paychecks yet.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </Card>
+      <Module>
+        <ModuleHead title="All paychecks" />
+        <Table
+          cols={COLS}
+          minWidth={980}
+          head={[
+            "Pay date",
+            "Employer",
+            <span key="g" className="block text-right">Gross</span>,
+            <span key="t" className="block text-right">Taxes</span>,
+            <span key="i" className="block text-right">Insurance</span>,
+            <span key="k" className="block text-right">401(k)</span>,
+            <span key="n" className="block text-right">Net</span>,
+            "Source",
+            "",
+          ]}
+        >
+          {paychecks.map((p) => (
+            <Row key={p.id} cols={COLS}>
+              <span className="font-mono text-caption text-muted">
+                {shortDate(p.pay_date)}
+              </span>
+              <span className="min-w-0 truncate text-body text-fg">
+                {p.employer ?? "—"}
+              </span>
+              <span className="text-right font-mono text-body tabular-nums text-fg">
+                {currency(p.gross, { cents: true })}
+              </span>
+              <span className="text-right font-mono text-body tabular-nums text-bad">
+                −{currency(taxes(p), { cents: true })}
+              </span>
+              <span className="text-right font-mono text-body tabular-nums text-bad">
+                −{currency(p.insurance, { cents: true })}
+              </span>
+              <span className="text-right font-mono text-body tabular-nums text-good">
+                {currency(p.retirement_401k, { cents: true })}
+              </span>
+              <span className="text-right font-mono text-body font-medium tabular-nums text-fg">
+                {currency(p.net, { cents: true })}
+              </span>
+              <span>
+                <Chip tone={p.parsed_by === "ai" ? "accent" : "neutral"}>
+                  {p.parsed_by === "ai" ? "AI-parsed" : "Manual"}
+                </Chip>
+              </span>
+              <span className="flex justify-end">
+                <RowAction tone="bad" onClick={() => remove(p.id)}>
+                  Delete
+                </RowAction>
+              </span>
+            </Row>
+          ))}
+          {paychecks.length === 0 && (
+            <EmptyRow>
+              No paychecks yet. Without one, the flow diagram and savings rate have
+              no denominator.
+            </EmptyRow>
+          )}
+        </Table>
+      </Module>
     </Shell>
   );
 }

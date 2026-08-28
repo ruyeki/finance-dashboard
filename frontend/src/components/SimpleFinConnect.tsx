@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 import { api } from "@/lib/api";
-import { Card } from "@/components/ui";
+import { ModuleHead } from "@/components/primitives";
+import { Button, Input } from "@/components/dash/controls";
 
 export default function SimpleFinConnect({
   onConnected,
@@ -26,7 +27,7 @@ export default function SimpleFinConnect({
         { method: "POST", body: JSON.stringify({ setup_token: token.trim() }) },
       );
       setMsg(
-        `Connected! Imported ${r.sync.accounts} accounts and ${r.sync.added} transactions.`,
+        `Connected. Imported ${r.sync.accounts} accounts and ${r.sync.added} transactions.`,
       );
       setToken("");
       onConnected();
@@ -38,36 +39,36 @@ export default function SimpleFinConnect({
   }
 
   return (
-    <Card className="mb-4">
-      <h2 className="text-sm font-medium">Connect a bank (SimpleFIN)</h2>
-      <p className="mt-1 text-xs text-muted">
-        Get a setup token at{" "}
-        <a
-          href="https://beta-bridge.simplefin.org"
-          target="_blank"
-          rel="noreferrer"
-          className="text-accent hover:underline"
-        >
-          beta-bridge.simplefin.org
-        </a>{" "}
-        (connect your banks there, then create a token), and paste it below.
-      </p>
-      <form onSubmit={connect} className="mt-3 flex gap-2">
-        <input
+    <div>
+      <ModuleHead
+        title="Connect a bank (SimpleFIN)"
+        subtitle={
+          <>
+            Get a setup token at{" "}
+            <a
+              href="https://beta-bridge.simplefin.org"
+              target="_blank"
+              rel="noreferrer"
+              className="text-accent underline underline-offset-2"
+            >
+              beta-bridge.simplefin.org
+            </a>{" "}
+            — connect your banks there, create a token, and paste it below.
+          </>
+        }
+      />
+      <form onSubmit={connect} className="mt-4 flex gap-2">
+        <Input
           value={token}
           onChange={(e) => setToken(e.target.value)}
           placeholder="Paste your SimpleFIN setup token"
-          className="flex-1 rounded-lg border border-line bg-panel2 px-3 py-2 text-sm outline-none focus:border-accent"
         />
-        <button
-          disabled={busy || !token.trim()}
-          className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-        >
+        <Button type="submit" variant="primary" disabled={busy || !token.trim()}>
           {busy ? "Connecting…" : "Connect"}
-        </button>
+        </Button>
       </form>
-      {msg && <p className="mt-2 text-xs text-good">{msg}</p>}
-      {error && <p className="mt-2 text-xs text-bad">{error}</p>}
-    </Card>
+      {msg && <p className="mt-3 text-caption text-good">{msg}</p>}
+      {error && <p className="mt-3 text-caption text-bad">{error}</p>}
+    </div>
   );
 }

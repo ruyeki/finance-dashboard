@@ -229,6 +229,69 @@ def stocks_overview(session: Session) -> dict:
     return {"accounts": out_accounts, "total": round(total, 2), "history": history}
 
 
+BENCHMARK = "^GSPC"  # S&P 500 index
+
+
+def portfolio_history(
+    session: Session, types: list[AccountType] | None = None, rng: str = "6mo"
+) -> dict:
+    """Reconstruct portfolio value over time from *current* holdings valued at
+    historical prices, alongside an S&P 500 line normalized to the same start.
+
+    Uses current share counts for all past dates (a back-test of today's
+    holdings), which gives a real growth curve without waiting for snapshots.
+    """
+    types = types or INVESTMENT_TYPES
+    accounts = session.exec(select(Account).where(Account.type.in_(types))).all()
+    acct_ids = [a.id for a in accounts]
+    if not acct_ids:
+        return {"series": [], "portfolio_return": None, "sp500_return": None}
+
+    hs = session.exec(select(Holding).where(Holding.account_id.in_(acct_ids))).all()
+    tickers = [h.ticker for h in hs if h.ticker and h.ticker.upper() not in MONEY_MARKET]
+    hist = prices.get_history(tickers + [BENCHMARK], rng)
+    bench = hist.get(BENCHMARK, {})
+    if not bench:
+        return {"series": [], "portfolio_return": None, "sp500_return": None}
+
+    dates = sorted(bench.keys())
+    last_price: dict[str, float] = {}
+    series: list[dict] = []
+    for d in dates:
+        total = 0.0
+        for h in hs:
+            if not h.ticker:
+                continue
+            t = h.ticker.upper()
+            if t in MONEY_MARKET:
+                p = 1.0
+            else:
+                tmap = hist.get(t, {})
+                if d in tmap:
+                    last_price[t] = tmap[d]
+                p = last_price.get(t)
+            if p is not None:
+                total += h.quantity * p
+        series.append({"date": d, "portfolio": round(total, 2), "_sp": bench[d]})
+
+    # Index the S&P line to the portfolio's starting dollar value.
+    start_val = series[0]["portfolio"]
+    sp0 = series[0]["_sp"] or 1.0
+    for pt in series:
+        pt["sp500"] = round(start_val * pt["_sp"] / sp0, 2)
+        del pt["_sp"]
+
+    pv0, pvN = series[0]["portfolio"], series[-1]["portfolio"]
+    port_ret = round(100 * (pvN - pv0) / pv0, 2) if pv0 else None
+    sp_ret = round(100 * (bench[dates[-1]] - sp0) / sp0, 2) if sp0 else None
+    return {
+        "series": series,
+        "portfolio_return": port_ret,
+        "sp500_return": sp_ret,
+        "current": pvN,
+    }
+
+
 def seed_401k(session: Session) -> dict:
     """Create (or reset) the Guideline 401k as a holdings-based account."""
     account = session.exec(

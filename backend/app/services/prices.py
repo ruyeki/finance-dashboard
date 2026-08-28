@@ -61,3 +61,41 @@ def get_prices(tickers: list[str], use_cache: bool = True) -> dict[str, float]:
 
 def get_price(ticker: str) -> float | None:
     return get_prices([ticker]).get(ticker.upper())
+
+
+def _fetch_history(ticker: str, rng: str) -> dict[str, float]:
+    """Daily closes for a ticker: {YYYY-MM-DD: close}."""
+    import datetime as dt
+
+    for host in _HOSTS:
+        try:
+            resp = httpx.get(
+                f"{host}/v8/finance/chart/{ticker}",
+                params={"range": rng, "interval": "1d"},
+                headers=_HEADERS,
+                timeout=15.0,
+            )
+            resp.raise_for_status()
+            res = resp.json()["chart"]["result"][0]
+            ts = res.get("timestamp") or []
+            closes = res["indicators"]["quote"][0].get("close") or []
+            out: dict[str, float] = {}
+            for t, c in zip(ts, closes):
+                if c is not None:
+                    d = dt.datetime.fromtimestamp(t, dt.timezone.utc).date().isoformat()
+                    out[d] = float(c)
+            if out:
+                return out
+        except Exception as exc:  # noqa: BLE001
+            logger.info("History fetch failed for %s via %s: %s", ticker, host, exc)
+    return {}
+
+
+def get_history(tickers: list[str], rng: str = "6mo") -> dict[str, dict[str, float]]:
+    """Return {ticker: {date: close}} for each resolvable ticker."""
+    out: dict[str, dict[str, float]] = {}
+    for t in {t.upper() for t in tickers if t}:
+        hist = _fetch_history(t, rng)
+        if hist:
+            out[t] = hist
+    return out

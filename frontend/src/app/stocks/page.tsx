@@ -1,19 +1,28 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import {
+  CartesianGrid,
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 import Shell from "@/components/Shell";
 import {
   Eyebrow,
   Module,
   ModuleHead,
   PageHead,
+  Pill,
   StatRow,
   StatTile,
 } from "@/components/primitives";
 import { Button, Chip, Row, Table } from "@/components/dash/controls";
-import { AccountBalances } from "@/components/dash/charts";
 import { api } from "@/lib/api";
-import { currency, share } from "@/lib/format";
+import { currency, shortDate, share, signedPoints } from "@/lib/format";
 
 interface Holding {
   ticker: string | null;
@@ -43,40 +52,80 @@ interface StockAccount {
 interface StocksData {
   accounts: StockAccount[];
   total: number;
-  history: { date: string; value: number }[];
 }
-interface BalanceSeries {
-  name: string;
-  type: string;
-  series: { date: string; balance: number }[];
+interface HistoryPoint {
+  date: string;
+  portfolio: number;
+  sp500: number;
+}
+interface History {
+  series: HistoryPoint[];
+  portfolio_return: number | null;
+  sp500_return: number | null;
 }
 
 const HOLDING_COLS = "72px 1fr 96px 96px 110px 64px";
+const ACCOUNTS = [
+  { key: "all", label: "All" },
+  { key: "_401k", label: "401(k)" },
+  { key: "roth", label: "Roth" },
+  { key: "brokerage", label: "Brokerage" },
+];
+const RANGES = ["1mo", "3mo", "6mo", "1y"];
+const RANGE_LABEL: Record<string, string> = {
+  "1mo": "1M",
+  "3mo": "3M",
+  "6mo": "6M",
+  "1y": "1Y",
+};
+const AXIS = { fill: "#8b93a7", fontSize: 11 } as const;
 
 export default function StocksPage() {
   const [data, setData] = useState<StocksData | null>(null);
-  const [series, setSeries] = useState<BalanceSeries[]>([]);
+  const [hist, setHist] = useState<History | null>(null);
+  const [acct, setAcct] = useState("all");
+  const [range, setRange] = useState("3mo");
   const [refreshing, setRefreshing] = useState(false);
+  const [seeding, setSeeding] = useState(false);
 
-  function load() {
+  const loadOverview = useCallback(() => {
     api<StocksData>("/stocks").then(setData).catch(() => {});
-    api<BalanceSeries[]>("/metrics/balance-trends")
-      .then((s) => setSeries(s.filter((x) => ["roth", "_401k", "brokerage"].includes(x.type))))
+  }, []);
+
+  const loadHistory = useCallback(() => {
+    setHist(null);
+    api<History>(`/stocks/history?account=${acct}&range=${range}`)
+      .then(setHist)
       .catch(() => {});
-  }
-  useEffect(load, []);
+  }, [acct, range]);
+
+  useEffect(loadOverview, [loadOverview]);
+  useEffect(loadHistory, [loadHistory]);
 
   async function refresh() {
     setRefreshing(true);
     try {
       await api("/stocks/refresh", { method: "POST" });
-      load();
+      loadOverview();
+      loadHistory();
     } finally {
       setRefreshing(false);
     }
   }
 
+  async function seed401k() {
+    setSeeding(true);
+    try {
+      await api("/stocks/seed-401k", { method: "POST" });
+      loadOverview();
+      loadHistory();
+    } finally {
+      setSeeding(false);
+    }
+  }
+
   const byType = (t: string) => data?.accounts.find((a) => a.type === t)?.value ?? 0;
+  const has401k = Boolean(data?.accounts.some((a) => a.type === "_401k"));
 
   return (
     <Shell bare>
@@ -84,9 +133,16 @@ export default function StocksPage() {
         title="Stocks"
         subtitle="Live value of your 401(k), Roth IRA and brokerage, priced from the market."
         actions={
-          <Button onClick={refresh} disabled={refreshing}>
-            {refreshing ? "Refreshing…" : "Refresh prices"}
-          </Button>
+          <div className="flex gap-2">
+            {data && !has401k && (
+              <Button onClick={seed401k} disabled={seeding} variant="primary">
+                {seeding ? "Seeding…" : "Seed 401(k)"}
+              </Button>
+            )}
+            <Button onClick={refresh} disabled={refreshing}>
+              {refreshing ? "Refreshing…" : "Refresh prices"}
+            </Button>
+          </div>
         }
       />
 
@@ -99,12 +155,94 @@ export default function StocksPage() {
 
       <Module>
         <ModuleHead
-          title="Portfolio value over time"
-          subtitle="Daily snapshots from live prices; fills in as the daily job runs."
+          title="Growth vs S&P 500"
+          subtitle="Your current holdings, back-tested at historical prices, against the index from the same start."
+          right={
+            <div className="flex flex-col items-end gap-2">
+              <div className="flex gap-1.5">
+                {ACCOUNTS.map((a) => (
+                  <Pill key={a.key} active={acct === a.key} onClick={() => setAcct(a.key)}>
+                    {a.label}
+                  </Pill>
+                ))}
+              </div>
+              <div className="flex gap-1.5">
+                {RANGES.map((r) => (
+                  <Pill key={r} active={range === r} onClick={() => setRange(r)}>
+                    {RANGE_LABEL[r]}
+                  </Pill>
+                ))}
+              </div>
+            </div>
+          }
         />
-        <AccountBalances
-          data={series.map((s) => ({ name: s.name, series: s.series }))}
-        />
+
+        {hist && hist.series.length > 1 ? (
+          <>
+            <div className="mt-3 flex gap-8">
+              <div>
+                <Eyebrow>Your investments</Eyebrow>
+                <div className="mt-1 font-mono text-body tabular-nums text-accent">
+                  {hist.portfolio_return != null ? signedPoints(hist.portfolio_return) : "—"}
+                </div>
+              </div>
+              <div>
+                <Eyebrow>S&P 500</Eyebrow>
+                <div className="mt-1 font-mono text-body tabular-nums text-muted">
+                  {hist.sp500_return != null ? signedPoints(hist.sp500_return) : "—"}
+                </div>
+              </div>
+            </div>
+            <div className="mt-4">
+              <ResponsiveContainer width="99%" height={260}>
+                <LineChart data={hist.series} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                  <CartesianGrid vertical={false} stroke="#1c212a" />
+                  <XAxis
+                    dataKey="date"
+                    tickFormatter={shortDate}
+                    tick={AXIS}
+                    axisLine={false}
+                    tickLine={false}
+                    minTickGap={44}
+                  />
+                  <YAxis domain={["dataMin", "dataMax"]} hide />
+                  <Tooltip
+                    formatter={(v: number, n: string) => [
+                      currency(v, { cents: true }),
+                      n === "portfolio" ? "Your investments" : "S&P 500",
+                    ]}
+                    labelFormatter={shortDate}
+                    contentStyle={{
+                      background: "#12151b",
+                      border: "1px solid #2a2f3a",
+                      borderRadius: 6,
+                      fontSize: 12,
+                    }}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="sp500"
+                    stroke="#6d7686"
+                    strokeWidth={1.5}
+                    strokeDasharray="4 3"
+                    dot={false}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="portfolio"
+                    stroke="#5b8cff"
+                    strokeWidth={2}
+                    dot={false}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </>
+        ) : (
+          <p className="mt-4 text-caption text-muted">
+            {hist ? "Not enough price history for this selection." : "Loading…"}
+          </p>
+        )}
       </Module>
 
       {data?.accounts.map((a) => (
@@ -173,8 +311,8 @@ export default function StocksPage() {
       {data && data.accounts.length === 0 && (
         <Module>
           <p className="text-body text-muted">
-            No investment accounts yet. Connect a brokerage/IRA, or the 401(k) can be
-            seeded from your fund values.
+            No investment accounts yet. Connect a brokerage/IRA, or seed the 401(k)
+            from your fund values.
           </p>
         </Module>
       )}

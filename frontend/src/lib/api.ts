@@ -1,24 +1,7 @@
-/** Port the FastAPI backend listens on. */
-const API_PORT = 8787;
-
-/**
- * Base URL of the backend.
- *
- * Derived from the page's own host unless NEXT_PUBLIC_API_URL says otherwise.
- * A pinned IP goes stale the moment the machine's DHCP lease moves, and every
- * request then fails in a way that looks like a wrong password rather than a
- * wrong address. Following `window.location` means the API is always looked up
- * on whatever host you actually browsed to, so the two cannot drift apart.
- */
-export function apiBase(): string {
-  const configured = process.env.NEXT_PUBLIC_API_URL?.trim();
-  if (configured) return configured.replace(/\/+$/, "");
-  if (typeof window !== "undefined") {
-    return `${window.location.protocol}//${window.location.hostname}:${API_PORT}`;
-  }
-  // Server-side render only; the browser re-evaluates this on load.
-  return `http://localhost:${API_PORT}`;
-}
+// Same-origin by default: requests hit /api/* on whatever host served the page,
+// and Next rewrites them to the backend (see next.config.mjs). Override only to
+// point at a backend on a different origin.
+export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "/api";
 
 /** The server answered, and said no. */
 export class ApiError extends Error {
@@ -31,9 +14,10 @@ export class ApiError extends Error {
 }
 
 /**
- * The request never reached the server — wrong host, wrong port, server down,
- * or CORS refused it. Deliberately distinct from ApiError so the UI can say
- * "cannot reach the API" instead of implying the credentials were wrong.
+ * The request never reached the server — the backend is down, or API_URL was
+ * overridden to an address that no longer exists. Deliberately distinct from
+ * ApiError so the UI can say "cannot reach the API" rather than implying the
+ * credentials were wrong.
  */
 export class NetworkError extends Error {
   base: string;
@@ -48,10 +32,9 @@ export async function api<T = unknown>(
   path: string,
   options: RequestInit = {},
 ): Promise<T> {
-  const base = apiBase();
   let res: Response;
   try {
-    res = await fetch(`${base}${path}`, {
+    res = await fetch(`${API_URL}${path}`, {
       ...options,
       credentials: "include",
       headers: {
@@ -61,7 +44,7 @@ export async function api<T = unknown>(
     });
   } catch {
     // fetch() rejects only when the request could not be completed at all.
-    throw new NetworkError(base);
+    throw new NetworkError(API_URL);
   }
 
   if (!res.ok) {

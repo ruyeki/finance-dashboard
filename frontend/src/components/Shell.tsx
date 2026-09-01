@@ -18,7 +18,7 @@ const NAV: NavItem[] = [
   { href: "/", label: "Overview" },
   { href: "/spending", label: "Spending" },
   { href: "/trends", label: "Trends" },
-  { href: "/flow", label: "Money Flow", hint: "•" },
+  { href: "/stocks", label: "Stocks", hint: "•" },
   { href: "/accounts", label: "Accounts", countOf: "accounts" },
   { href: "/paychecks", label: "Paychecks", countOf: "paychecks" },
   { href: "/settings", label: "Settings" },

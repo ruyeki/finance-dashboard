@@ -62,6 +62,9 @@ class Account(SQLModel, table=True):
     available_balance: float | None = None
     currency: str = "USD"
     is_manual: bool = False
+    # For investment accounts with an auto-invest plan (e.g. 401k): total dollars
+    # contributed each pay period (employee + employer), split by holding target_pct.
+    contribution_per_period: float = 0.0
     created_at: dt.datetime = Field(default_factory=utcnow)
     updated_at: dt.datetime = Field(default_factory=utcnow)
 
@@ -96,9 +99,11 @@ class Holding(SQLModel, table=True):
     account_id: int = Field(foreign_key="account.id", index=True)
     ticker: str | None = None
     name: str = ""
-    quantity: float = 0.0
+    quantity: float = 0.0  # shares
     cost_basis: float | None = None
-    value: float = 0.0
+    price: float | None = None  # latest per-share price (from Yahoo)
+    value: float = 0.0  # quantity * price
+    target_pct: float | None = None  # allocation % of contributions (auto-invest plans)
     as_of: dt.date = Field(default_factory=today)
 
 

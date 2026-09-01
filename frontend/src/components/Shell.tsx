@@ -3,7 +3,7 @@
 import { createContext, useContext, useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
-import { api } from "@/lib/api";
+import { api, ApiError, NetworkError } from "@/lib/api";
 import { daysUntil, relativeDays, weekdayDate } from "@/lib/format";
 import type { Account, Paycheck, SpendingSummary } from "@/lib/types";
 
@@ -52,6 +52,7 @@ export default function Shell({
   const router = useRouter();
   const pathname = usePathname();
   const [ready, setReady] = useState(false);
+  const [unreachable, setUnreachable] = useState<string | null>(null);
   const [summary, setSummary] = useState<SpendingSummary | null>(null);
   const [counts, setCounts] = useState<{ accounts?: number; paychecks?: number }>({});
   const [env, setEnv] = useState<string | null>(null);
@@ -59,10 +60,19 @@ export default function Shell({
   useEffect(() => {
     api("/auth/me")
       .then(() => setReady(true))
-      // Preserved from the original: any failure sends you to /login. This
-      // cannot tell a 401 from a network error, which is a known wart — left
-      // as-is so the redesign does not quietly change auth behaviour.
-      .catch(() => router.replace("/login"));
+      .catch((err) => {
+        // A missing session and an unreachable backend are different problems.
+        // Bouncing both to /login sends you to re-enter a password that was
+        // never the issue.
+        if (err instanceof NetworkError) {
+          setUnreachable(err.base);
+          return;
+        }
+        if (err instanceof ApiError && err.status !== 401) {
+          setUnreachable(null);
+        }
+        router.replace("/login");
+      });
   }, [router]);
 
   // Sidebar furniture. Each piece degrades on its own: a failed count just
@@ -93,6 +103,24 @@ export default function Shell({
   async function logout() {
     await api("/auth/logout", { method: "POST" });
     router.replace("/login");
+  }
+
+  if (unreachable) {
+    return (
+      <div className="flex min-h-screen items-center justify-center px-6">
+        <div className="max-w-md">
+          <h1 className="text-h2 font-semibold text-fg">Cannot reach the API</h1>
+          <p className="mt-2 text-body text-muted">
+            Nothing answered at{" "}
+            <span className="font-mono text-caption text-fg">{unreachable}</span>.
+          </p>
+          <p className="mt-3 text-caption text-muted">
+            Check that the backend is running, and that it is reachable at the
+            same host you loaded this page from. You are not signed out.
+          </p>
+        </div>
+      </div>
+    );
   }
 
   if (!ready) {

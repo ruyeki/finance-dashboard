@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { api, ApiError } from "@/lib/api";
+import { api, ApiError, NetworkError } from "@/lib/api";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -21,7 +21,21 @@ export default function LoginPage() {
       });
       router.push("/");
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Login failed");
+      // A wrong password and an unreachable server both used to read "Login
+      // failed", which sends you hunting for the wrong problem.
+      if (err instanceof NetworkError) {
+        setError(
+          `Cannot reach the API at ${err.base}. Check the backend is running and that its address matches this page's.`,
+        );
+      } else if (err instanceof ApiError) {
+        setError(
+          err.status === 401
+            ? "That password is not right."
+            : `${err.message} (${err.status})`,
+        );
+      } else {
+        setError("Login failed for an unknown reason.");
+      }
     } finally {
       setLoading(false);
     }

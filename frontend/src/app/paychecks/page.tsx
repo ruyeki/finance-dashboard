@@ -19,7 +19,7 @@ import {
   RowAction,
   Table,
 } from "@/components/dash/controls";
-import { api, API_URL, ApiError } from "@/lib/api";
+import { api, apiBase, ApiError } from "@/lib/api";
 import { currency, share, shortDate } from "@/lib/format";
 import { Paycheck } from "@/lib/types";
 
@@ -70,7 +70,7 @@ export default function PaychecksPage() {
     const body = new FormData();
     body.append("file", file);
     try {
-      const res = await fetch(`${API_URL}/paychecks/upload`, {
+      const res = await fetch(`${apiBase()}/paychecks/upload`, {
         method: "POST",
         credentials: "include",
         body,

@@ -31,10 +31,25 @@ class Settings(BaseSettings):
     gemini_model: str = "gemini-3.6-flash"
 
     # CORS
+    # Comma-separated. The machine's address changes with its DHCP lease, so a
+    # single pinned origin breaks every request whenever it moves.
     frontend_origin: str = "http://localhost:3000"
+    # Additionally accept any origin on a private network. A self-hosted
+    # dashboard is reached by whatever address the host currently has; without
+    # this, an IP change surfaces as a CORS failure that looks exactly like a
+    # wrong password. Set false to pin access to frontend_origin alone.
+    allow_private_network_origins: bool = True
 
     # Uploads
     upload_dir: str = "./data/uploads"
+
+    @property
+    def frontend_origins_list(self) -> list[str]:
+        return [
+            o.strip().rstrip("/")
+            for o in self.frontend_origin.split(",")
+            if o.strip()
+        ]
 
     @property
     def plaid_products_list(self) -> list[str]:

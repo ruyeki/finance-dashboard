@@ -40,9 +40,23 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Finance Dashboard API", lifespan=lifespan)
 
+# Any origin on a loopback or RFC1918 address. Deliberately not a wildcard:
+# credentials are sent with every request, so this stays inside the LAN.
+PRIVATE_ORIGIN_RE = (
+    r"^https?://("
+    r"localhost|127\.\d{1,3}\.\d{1,3}\.\d{1,3}|\[::1\]|"
+    r"10\.\d{1,3}\.\d{1,3}\.\d{1,3}|"
+    r"192\.168\.\d{1,3}\.\d{1,3}|"
+    r"172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}"
+    r")(:\d+)?$"
+)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[settings.frontend_origin],
+    allow_origins=settings.frontend_origins_list,
+    allow_origin_regex=(
+        PRIVATE_ORIGIN_RE if settings.allow_private_network_origins else None
+    ),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

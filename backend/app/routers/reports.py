@@ -6,7 +6,7 @@ from sqlmodel import Session
 from app.db import get_session
 from app.models import Report
 from app.security import AuthDep
-from app.services import gemini, reports
+from app.services import emailer, gemini, reports
 
 router = APIRouter(prefix="/reports", tags=["reports"], dependencies=[AuthDep])
 
@@ -48,3 +48,19 @@ def get_report(report_id: int, session: Session = Depends(get_session)) -> Repor
     if not report:
         raise HTTPException(404, "Report not found")
     return report
+
+
+@router.post("/{report_id}/email")
+def email_report(report_id: int, session: Session = Depends(get_session)) -> dict:
+    report = session.get(Report, report_id)
+    if not report:
+        raise HTTPException(404, "Report not found")
+    if not emailer.is_configured():
+        raise HTTPException(
+            400, "Email is not configured (set SMTP_* and REPORT_EMAIL_TO in .env)."
+        )
+    try:
+        emailer.send_report(report)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(502, f"Sending email failed: {exc}")
+    return {"sent_to": None, "message": "Report emailed."}

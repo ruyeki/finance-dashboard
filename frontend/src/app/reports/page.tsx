@@ -47,7 +47,9 @@ export default function ReportsPage() {
   const [selected, setSelected] = useState<number | null>(null);
   const [report, setReport] = useState<FullReport | null>(null);
   const [generating, setGenerating] = useState(false);
+  const [emailing, setEmailing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   const loadList = useCallback(() => {
     api<ReportSummary[]>("/reports")
@@ -71,6 +73,7 @@ export default function ReportsPage() {
   async function generate() {
     setGenerating(true);
     setError(null);
+    setNotice(null);
     try {
       const r = await api<FullReport>("/reports/generate", { method: "POST" });
       await loadList();
@@ -83,6 +86,21 @@ export default function ReportsPage() {
     }
   }
 
+  async function emailReport() {
+    if (!report) return;
+    setEmailing(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await api(`/reports/${report.id}/email`, { method: "POST" });
+      setNotice("Report emailed.");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not send the email.");
+    } finally {
+      setEmailing(false);
+    }
+  }
+
   const c = report?.content;
 
   return (
@@ -91,11 +109,24 @@ export default function ReportsPage() {
         title="Reports"
         subtitle="An AI read on each pay period — what you spent, how it compares, and what to do next."
         actions={
-          <Button onClick={generate} disabled={generating} variant="primary">
-            {generating ? "Analyzing…" : "Generate report"}
-          </Button>
+          <div className="flex gap-2">
+            {report && (
+              <Button onClick={emailReport} disabled={emailing}>
+                {emailing ? "Sending…" : "Email"}
+              </Button>
+            )}
+            <Button onClick={generate} disabled={generating} variant="primary">
+              {generating ? "Analyzing…" : "Generate report"}
+            </Button>
+          </div>
         }
       />
+
+      {notice && (
+        <div className="border-b border-line px-8 py-3">
+          <p className="text-caption text-good">{notice}</p>
+        </div>
+      )}
 
       {list.length > 0 && (
         <div className="flex flex-wrap gap-1.5 border-b border-line px-8 py-3">

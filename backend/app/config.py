@@ -40,6 +40,24 @@ class Settings(BaseSettings):
     # Uploads
     upload_dir: str = "./data/uploads"
 
+    # Email (optional): SMTP for period-report emails. For Gmail, use an App
+    # Password (Google account -> Security -> App passwords), not your login.
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_from: str = ""  # defaults to smtp_user
+    report_email_to: str = ""
+
+    @property
+    def email_configured(self) -> bool:
+        return bool(
+            self.smtp_host
+            and self.smtp_user
+            and self.smtp_password
+            and self.report_email_to
+        )
+
     @property
     def plaid_products_list(self) -> list[str]:
         return [p.strip() for p in self.plaid_products.split(",") if p.strip()]

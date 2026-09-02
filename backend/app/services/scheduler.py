@@ -18,7 +18,7 @@ from sqlmodel import Session
 from app.config import settings
 from app.db import engine
 from app.models import AccountType
-from app.services import holdings, reports, sync_manager
+from app.services import emailer, holdings, reports, sync_manager
 
 logger = logging.getLogger(__name__)
 
@@ -50,13 +50,19 @@ def run_revalue_daily() -> None:
         with Session(engine) as session:
             r = holdings.revalue(session)
             c = holdings.apply_scheduled_contributions(session)
-            # On a payday, write the report for the period that just ended.
+            # On a payday, write the report for the period that just ended,
+            # and email it if email is configured.
             rep = reports.generate_for_completed_period(session)
+            if rep and emailer.is_configured():
+                try:
+                    emailer.send_report(rep)
+                except Exception as exc:  # noqa: BLE001
+                    logger.exception("Emailing report failed: %s", exc)
         logger.info(
             "Daily revalue: %s; contributions: %s; report: %s",
             r,
             c,
-            f"generated for {rep.period_start}" if rep else "none",
+            f"generated+emailed for {rep.period_start}" if rep else "none",
         )
     except Exception as exc:  # noqa: BLE001
         logger.exception("Daily revalue failed: %s", exc)

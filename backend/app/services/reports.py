@@ -56,8 +56,18 @@ def build_context(session: Session, as_of: dt.date) -> tuple[dict, dict]:
     return context, summ
 
 
+def last_completed_period_as_of(session: Session) -> dt.date:
+    """A date inside the most recently *completed* pay period."""
+    cadence, anchor = payperiods.get_pay_config(session)
+    cur_start, _ = payperiods.period_for_date(dt.date.today(), cadence, anchor)
+    return cur_start - dt.timedelta(days=1)
+
+
 def generate(session: Session, as_of: dt.date | None = None) -> Report:
-    as_of = as_of or dt.date.today()
+    # Default to the period that just ended, not the in-progress one — a report
+    # on a period with three days of data isn't useful.
+    if as_of is None:
+        as_of = last_completed_period_as_of(session)
     context, summ = build_context(session, as_of)
     result = gemini.analyze_finances(context)
 

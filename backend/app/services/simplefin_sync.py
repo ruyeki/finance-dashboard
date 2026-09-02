@@ -137,9 +137,9 @@ def sync_item(session: Session, item: Item) -> dict:
                     blob, income_keywords
                 )
             else:
-                # Money out: only auto-exclude credit-card payoffs (they'd double-
-                # count card purchases). Everything else counts under its account.
-                is_transfer = categorize.detect_card_payment(merchant) or categorize.detect_card_payment(desc)
+                # Money out: exclude transfers (card payoffs, Zelle, ATM, bank
+                # payments, account moves) from spending; keep real purchases.
+                is_transfer = categorize.detect_transfer(merchant) or categorize.detect_transfer(desc)
                 is_income = False
                 if is_transfer:
                     category, source = "Transfer", CategorySource.rule

@@ -246,7 +246,7 @@ def reclassify_all(session: Session) -> dict:
                 income += 1
             continue
 
-        if detect_card_payment(name):
+        if detect_transfer(name):
             txn.category = "Transfer"
             txn.category_source = CategorySource.rule
             txn.is_transfer = True
@@ -254,8 +254,8 @@ def reclassify_all(session: Session) -> dict:
             session.add(txn)
             card_payments += 1
             continue
-        # Not a card payoff: it should count as spending. Clear any stale transfer
-        # flag and reset auto-set categories so Gemini/rules can reclassify.
+        # Not a transfer: it counts as spending. Clear any stale transfer flag
+        # and reset auto-set categories so Gemini/rules can reclassify.
         txn.is_transfer = False
         if txn.category_source in (CategorySource.rule, CategorySource.uncategorized) and txn.category in ("Transfer", "Uncategorized"):
             txn.category = "Uncategorized"

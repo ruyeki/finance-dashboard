@@ -1,0 +1,16 @@
+[Unit]
+Description=Finance Dashboard API (FastAPI + scheduler)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ryan
+WorkingDirectory=/home/ryan/finance-dashboard/backend
+# Localhost only; the Next frontend proxies /api to it.
+ExecStart=/home/ryan/finance-dashboard/backend/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8787
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

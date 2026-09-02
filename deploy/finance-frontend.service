@@ -1,0 +1,16 @@
+[Unit]
+Description=Finance Dashboard Web (Next.js)
+After=network-online.target finance-backend.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ryan
+WorkingDirectory=/home/ryan/finance-dashboard/frontend
+# Dev server, bound to all interfaces so LAN devices can reach it.
+ExecStart=/usr/bin/npm run dev -- -H 0.0.0.0 -p 3000
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

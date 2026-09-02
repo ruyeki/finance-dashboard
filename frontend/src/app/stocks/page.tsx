@@ -127,7 +127,11 @@ export default function StocksPage() {
   }
 
   const byType = (t: string) => data?.accounts.find((a) => a.type === t)?.value ?? 0;
-  const has401k = Boolean(data?.accounts.some((a) => a.type === "_401k"));
+  // Offer the seed button when there's no 401(k) yet, or one exists but is
+  // empty (e.g. a fresh database on another machine).
+  const needs401k = Boolean(
+    data && !data.accounts.some((a) => a.type === "_401k" && a.value > 0),
+  );
 
   return (
     <Shell bare>
@@ -136,7 +140,7 @@ export default function StocksPage() {
         subtitle="Live value of your 401(k), Roth IRA and brokerage, priced from the market."
         actions={
           <div className="flex gap-2">
-            {data && !has401k && (
+            {needs401k && (
               <Button onClick={seed401k} disabled={seeding} variant="primary">
                 {seeding ? "Seeding…" : "Seed 401(k)"}
               </Button>

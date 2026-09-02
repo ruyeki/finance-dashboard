@@ -97,6 +97,51 @@ PAYSTUB_FIELDS = {
 }
 
 
+REPORT_PROMPT = """You are a sharp, encouraging personal-finance analyst writing a
+report for one person about their most recent pay period. You are given a JSON
+object with the real figures for this period and the previous one, their
+investment portfolio, and retirement-goal progress.
+
+Write a concise, specific report. Rules:
+- Use ONLY the numbers provided. Never invent figures. Round dollars sensibly.
+- Be concrete: name actual categories and merchants and cite their amounts.
+- Be honest but constructive. If they overspent, say so plainly, then help.
+- Cut-back suggestions must target real categories/merchants from the data, with
+  a realistic monthly-dollar impact.
+- Keep each text field tight (1-4 sentences). No markdown, no preamble.
+
+Return a JSON object with exactly these keys:
+{
+  "headline": "one punchy sentence summarizing the period",
+  "spending": "2-4 sentences on where the money went, with amounts",
+  "comparison": {
+    "direction": "improved" | "worse" | "similar",
+    "note": "1-2 sentences comparing spending to last period, with the numbers"
+  },
+  "wins": ["1-3 short positive observations, if any"],
+  "cutbacks": [
+    {"target": "category or merchant", "suggestion": "specific action", "monthly_impact": number}
+  ],
+  "portfolio": "2-3 sentences: total invested, how it moved vs the S&P 500 this period, and retirement-goal progress",
+  "actions": ["2-3 concrete next steps"]
+}
+
+Here is the data:
+"""
+
+
+def analyze_finances(context: dict) -> dict:
+    """Produce a structured finance report from a period's figures."""
+    if not is_enabled():
+        raise RuntimeError("GEMINI_API_KEY is not set; cannot generate reports.")
+    resp = _client().models.generate_content(
+        model=settings.gemini_model,
+        contents=REPORT_PROMPT + json.dumps(context, default=str),
+        config={"response_mime_type": "application/json"},
+    )
+    return json.loads(resp.text)
+
+
 def parse_paystub(pdf_bytes: bytes) -> dict:
     """Extract a structured paycheck breakdown from a paystub PDF."""
     if not is_enabled():

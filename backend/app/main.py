@@ -13,6 +13,7 @@ from app.routers import (
     metrics,
     paychecks,
     plaid,
+    reports,
     settings_router,
     simplefin,
     stocks,
@@ -60,6 +61,7 @@ app.include_router(paychecks.router)
 app.include_router(metrics.router)
 app.include_router(settings_router.router)
 app.include_router(stocks.router)
+app.include_router(reports.router)
 
 
 @app.get("/health")

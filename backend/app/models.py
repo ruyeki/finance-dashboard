@@ -145,3 +145,15 @@ class ContributionGoal(SQLModel, table=True):
 class Setting(SQLModel, table=True):
     key: str = Field(primary_key=True)
     value: str
+
+
+class Report(SQLModel, table=True):
+    """An AI-generated finance report for one pay period."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    period_start: dt.date = Field(index=True)
+    period_end: dt.date
+    generated_at: dt.datetime = Field(default_factory=utcnow)
+    model: str = ""
+    headline: str = ""  # denormalized for the list view
+    content: dict = Field(default_factory=dict, sa_column=Column(JSON))

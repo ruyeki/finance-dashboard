@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
 import { currency } from "@/lib/format";
 
@@ -44,6 +45,26 @@ export function Donut({
 }) {
   const slices = data.filter((d) => d.value > 0);
   const total = slices.reduce((s, d) => s + d.value, 0);
+
+  // Draw the ring clockwise from 12 o'clock. Recharts' built-in Pie animation
+  // falls back to a fade once paddingAngle is set, so we sweep the end angle
+  // ourselves for a real "drawing a circle" reveal that runs on every render.
+  const [progress, setProgress] = useState(0);
+  const key = `${slices.length}:${total}`;
+  useEffect(() => {
+    setProgress(0);
+    let raf = 0;
+    let start: number | null = null;
+    const step = (ts: number) => {
+      if (start === null) start = ts;
+      const t = Math.min(1, (ts - start) / 900);
+      setProgress(1 - Math.pow(1 - t, 3)); // ease-out cubic
+      if (t < 1) raf = requestAnimationFrame(step);
+    };
+    raf = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(raf);
+  }, [key]);
+
   if (!total) {
     return <p className="mt-4 text-caption text-muted">{emptyHint}</p>;
   }
@@ -63,10 +84,9 @@ export function Donut({
               outerRadius={dim.outer}
               paddingAngle={1.5}
               stroke="none"
-              isAnimationActive
-              animationBegin={80}
-              animationDuration={800}
-              animationEasing="ease-out"
+              startAngle={90}
+              endAngle={90 - 360 * progress}
+              isAnimationActive={false}
             >
               {slices.map((s, i) => (
                 <Cell key={i} fill={color(s, i)} />

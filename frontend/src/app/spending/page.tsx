@@ -199,16 +199,16 @@ function SpendingContent() {
       </div>
 
       <Module>
+        <ModuleHead title="Top merchants" subtitle="This period, by total spent." />
+        <MerchantRows data={active?.top_merchants ?? []} limit={8} columns={2} />
+      </Module>
+
+      <Module>
         <ModuleHead
           title="Transactions this period"
           subtitle="Transfers and income are listed but excluded from spending totals. Changing a category becomes a reusable rule."
         />
         <TransactionsTable rows={txns} onRecategorize={recategorize} />
-      </Module>
-
-      <Module>
-        <ModuleHead title="Top merchants" subtitle="This period, by total spent." />
-        <MerchantRows data={active?.top_merchants ?? []} limit={8} columns={2} />
       </Module>
     </>
   );

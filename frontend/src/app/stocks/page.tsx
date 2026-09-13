@@ -22,13 +22,17 @@ import {
 } from "@/components/primitives";
 import { Button, Chip, Row, Table } from "@/components/dash/controls";
 import { api } from "@/lib/api";
-import { currency, shortDate, share, signedPoints } from "@/lib/format";
+import { currency, shortDate, share, signedCurrency, signedPoints } from "@/lib/format";
 
 interface Holding {
   ticker: string | null;
   name: string;
   shares: number;
   price: number | null;
+  avg_cost: number | null;
+  cost: number | null;
+  gain: number | null;
+  gain_pct: number | null;
   value: number;
   pct: number;
   target_pct: number | null;
@@ -45,6 +49,9 @@ interface StockAccount {
   type: string;
   type_label: string;
   value: number;
+  cost: number | null;
+  gain: number | null;
+  gain_pct: number | null;
   holdings: Holding[];
   contribution_per_period: number;
   contributions: Contribution[];
@@ -52,6 +59,9 @@ interface StockAccount {
 interface StocksData {
   accounts: StockAccount[];
   total: number;
+  cost: number | null;
+  gain: number | null;
+  gain_pct: number | null;
 }
 interface HistoryPoint {
   date: string;
@@ -64,7 +74,7 @@ interface History {
   sp500_return: number | null;
 }
 
-const HOLDING_COLS = "72px 1fr 96px 96px 110px 64px";
+const HOLDING_COLS = "64px 1fr 80px 84px 84px 100px 128px 56px";
 const ACCOUNTS = [
   { key: "all", label: "All" },
   { key: "_401k", label: "401(k)" },
@@ -126,7 +136,12 @@ export default function StocksPage() {
     }
   }
 
-  const byType = (t: string) => data?.accounts.find((a) => a.type === t)?.value ?? 0;
+  const acctOf = (t: string) => data?.accounts.find((a) => a.type === t);
+  const byType = (t: string) => acctOf(t)?.value ?? 0;
+  const gainDelta = (a?: StockAccount | StocksData | null) =>
+    a && a.gain != null && a.gain_pct != null
+      ? `${signedCurrency(a.gain)} · ${signedPoints(a.gain_pct)}`
+      : undefined;
   // Offer the seed button when there's no 401(k) yet, or one exists but is
   // empty (e.g. a fresh database on another machine).
   const needs401k = Boolean(
@@ -153,10 +168,33 @@ export default function StocksPage() {
       />
 
       <StatRow>
-        <StatTile label="Total invested" value={data ? currency(data.total) : "—"} />
-        <StatTile label="401(k)" value={currency(byType("_401k"))} />
-        <StatTile label="Roth IRA" value={currency(byType("roth"))} />
-        <StatTile label="Brokerage" value={currency(byType("brokerage"))} valueTone="accent" />
+        <StatTile
+          label="Total invested"
+          value={data ? currency(data.total) : "—"}
+          delta={gainDelta(data)}
+          deltaTone={data && data.gain != null && data.gain >= 0 ? "good" : "bad"}
+          note="Unrealized gain on Roth + brokerage"
+        />
+        <StatTile label="401(k)" value={currency(byType("_401k"))} note="No cost basis available" />
+        <StatTile
+          label="Roth IRA"
+          value={currency(byType("roth"))}
+          delta={gainDelta(acctOf("roth"))}
+          deltaTone={
+            acctOf("roth")?.gain != null && acctOf("roth")!.gain! >= 0 ? "good" : "bad"
+          }
+        />
+        <StatTile
+          label="Brokerage"
+          value={currency(byType("brokerage"))}
+          valueTone="accent"
+          delta={gainDelta(acctOf("brokerage"))}
+          deltaTone={
+            acctOf("brokerage")?.gain != null && acctOf("brokerage")!.gain! >= 0
+              ? "good"
+              : "bad"
+          }
+        />
       </StatRow>
 
       <Module>
@@ -268,7 +306,7 @@ export default function StocksPage() {
 
           <Table
             cols={HOLDING_COLS}
-            head={["Ticker", "Name", "Shares", "Price", "Value", "Weight"]}
+            head={["Ticker", "Name", "Shares", "Price", "Avg cost", "Value", "Gain", "Weight"]}
           >
             {a.holdings.map((h) => (
               <Row key={h.ticker ?? h.name} cols={HOLDING_COLS}>
@@ -280,8 +318,20 @@ export default function StocksPage() {
                 <span className="text-right tabular-nums text-muted">
                   {h.price != null ? currency(h.price, { cents: true }) : "—"}
                 </span>
+                <span className="text-right tabular-nums text-muted">
+                  {h.avg_cost != null ? currency(h.avg_cost, { cents: true }) : "—"}
+                </span>
                 <span className="text-right tabular-nums text-fg">
                   {currency(h.value, { cents: true })}
+                </span>
+                <span
+                  className={`text-right font-mono text-micro tabular-nums ${
+                    h.gain == null ? "text-dim" : h.gain >= 0 ? "text-good" : "text-bad"
+                  }`}
+                >
+                  {h.gain != null && h.gain_pct != null
+                    ? `${signedCurrency(h.gain)} · ${signedPoints(h.gain_pct)}`
+                    : "—"}
                 </span>
                 <span className="text-right font-mono text-micro tabular-nums text-dim">
                   {share(h.pct)}

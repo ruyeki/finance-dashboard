@@ -186,6 +186,11 @@ def sync_item(session: Session, item: Item) -> dict:
                         name=h.get("description", "") or "",
                         quantity=_to_float(h.get("shares")),
                         cost_basis=_to_float(h["cost_basis"]) if h.get("cost_basis") else None,
+                        # SimpleFIN's purchase_price is the average cost per share;
+                        # cost_basis comes through as 0.00, so this is our basis.
+                        purchase_price=(
+                            _to_float(h["purchase_price"]) if h.get("purchase_price") else None
+                        ),
                         value=_to_float(h.get("market_value")),
                     )
                 )

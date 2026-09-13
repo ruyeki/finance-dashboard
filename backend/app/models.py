@@ -101,6 +101,7 @@ class Holding(SQLModel, table=True):
     name: str = ""
     quantity: float = 0.0  # shares
     cost_basis: float | None = None
+    purchase_price: float | None = None  # average cost per share (from SimpleFIN)
     price: float | None = None  # latest per-share price (from Yahoo)
     value: float = 0.0  # quantity * price
     target_pct: float | None = None  # allocation % of contributions (auto-invest plans)

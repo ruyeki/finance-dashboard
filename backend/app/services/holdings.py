@@ -164,6 +164,8 @@ def stocks_overview(session: Session) -> dict:
 
     out_accounts = []
     total = 0.0
+    total_cost = 0.0  # only over holdings that have a known basis
+    total_cost_value = 0.0  # market value of those same holdings
     for a in accounts:
         hs = session.exec(
             select(Holding).where(Holding.account_id == a.id)
@@ -171,18 +173,39 @@ def stocks_overview(session: Session) -> dict:
         hs.sort(key=lambda h: h.value, reverse=True)
         val = round(sum(h.value for h in hs), 2)
         total += val
-        holdings_out = [
-            {
-                "ticker": h.ticker,
-                "name": h.name or h.ticker,
-                "shares": round(h.quantity, 4),
-                "price": h.price,
-                "value": round(h.value, 2),
-                "pct": round(100 * h.value / val, 1) if val else 0,
-                "target_pct": h.target_pct,
-            }
-            for h in hs
-        ]
+
+        # Cost basis / unrealized gain, computed only over holdings whose
+        # average purchase price we know (SimpleFIN Roth + brokerage). 401(k)
+        # holdings are seeded without a basis and are simply left out of gains.
+        acct_cost = 0.0
+        acct_cost_value = 0.0
+        holdings_out = []
+        for h in hs:
+            cost = round(h.purchase_price * h.quantity, 2) if h.purchase_price else None
+            gain = round(h.value - cost, 2) if cost is not None else None
+            gain_pct = round(100 * gain / cost, 2) if cost else None
+            if cost is not None:
+                acct_cost += cost
+                acct_cost_value += h.value
+            holdings_out.append(
+                {
+                    "ticker": h.ticker,
+                    "name": h.name or h.ticker,
+                    "shares": round(h.quantity, 4),
+                    "price": h.price,
+                    "avg_cost": h.purchase_price,
+                    "cost": cost,
+                    "gain": gain,
+                    "gain_pct": gain_pct,
+                    "value": round(h.value, 2),
+                    "pct": round(100 * h.value / val, 1) if val else 0,
+                    "target_pct": h.target_pct,
+                }
+            )
+        total_cost += acct_cost
+        total_cost_value += acct_cost_value
+        acct_gain = round(acct_cost_value - acct_cost, 2) if acct_cost else None
+        acct_gain_pct = round(100 * acct_gain / acct_cost, 2) if acct_cost else None
         contributions = []
         if a.contribution_per_period > 0:
             for h in hs:
@@ -202,6 +225,9 @@ def stocks_overview(session: Session) -> dict:
                 "type": a.type.value,
                 "type_label": TYPE_LABELS.get(a.type, a.type.value),
                 "value": val,
+                "cost": round(acct_cost, 2) if acct_cost else None,
+                "gain": acct_gain,
+                "gain_pct": acct_gain_pct,
                 "holdings": holdings_out,
                 "contribution_per_period": a.contribution_per_period,
                 "contributions": contributions,
@@ -226,7 +252,15 @@ def stocks_overview(session: Session) -> dict:
             {"date": d.isoformat(), "value": round(v, 2)} for d, v in sorted(by_date.items())
         ]
 
-    return {"accounts": out_accounts, "total": round(total, 2), "history": history}
+    gain = round(total_cost_value - total_cost, 2) if total_cost else None
+    return {
+        "accounts": out_accounts,
+        "total": round(total, 2),
+        "cost": round(total_cost, 2) if total_cost else None,
+        "gain": gain,
+        "gain_pct": round(100 * gain / total_cost, 2) if total_cost else None,
+        "history": history,
+    }
 
 
 BENCHMARK = "^GSPC"  # S&P 500 index

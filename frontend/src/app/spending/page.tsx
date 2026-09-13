@@ -179,6 +179,7 @@ function SpendingContent() {
           />
           <Donut
             data={catSlices}
+            size="lg"
             centerLabel="spent"
             centerValue={active ? currency(active.total) : undefined}
             emptyHint="No spending yet this period."

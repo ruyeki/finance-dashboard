@@ -24,15 +24,22 @@ export type Slice = { label: string; value: number; color?: string; sub?: string
  * Donut with a centered total and a legend. Slices must be positive; pass
  * abs() for liabilities and colour them if the sign matters.
  */
+const SIZES = {
+  md: { box: "h-52 w-52", inner: 66, outer: 96 },
+  lg: { box: "h-64 w-64", inner: 86, outer: 124 },
+} as const;
+
 export function Donut({
   data,
   centerLabel,
   centerValue,
+  size = "md",
   emptyHint = "Nothing to show yet.",
 }: {
   data: Slice[];
   centerLabel?: string;
   centerValue?: string;
+  size?: "md" | "lg";
   emptyHint?: string;
 }) {
   const slices = data.filter((d) => d.value > 0);
@@ -41,18 +48,19 @@ export function Donut({
     return <p className="mt-4 text-caption text-muted">{emptyHint}</p>;
   }
   const color = (s: Slice, i: number) => s.color ?? COLORS[i % COLORS.length];
+  const dim = SIZES[size];
 
   return (
-    <div className="mt-4 flex flex-col items-center gap-7 sm:flex-row">
-      <div className="relative h-48 w-48 shrink-0">
+    <div className="mt-4 flex flex-col items-center gap-8 sm:flex-row">
+      <div className={`relative ${dim.box} shrink-0`}>
         <ResponsiveContainer width="99%" height="100%">
           <PieChart>
             <Pie
               data={slices}
               dataKey="value"
               nameKey="label"
-              innerRadius={62}
-              outerRadius={88}
+              innerRadius={dim.inner}
+              outerRadius={dim.outer}
               paddingAngle={1.5}
               stroke="none"
             >
@@ -68,6 +76,8 @@ export function Donut({
                 borderRadius: 6,
                 fontSize: 12,
               }}
+              itemStyle={{ color: "#eef1f6" }}
+              labelStyle={{ color: "#eef1f6" }}
             />
           </PieChart>
         </ResponsiveContainer>

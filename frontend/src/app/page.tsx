@@ -229,6 +229,7 @@ function OverviewContent() {
           />
           <Donut
             data={catSlices}
+            size="lg"
             centerLabel="spent"
             centerValue={summary ? currency(summary.total) : undefined}
             emptyHint="No spending yet this period."

@@ -11,17 +11,11 @@ import {
   StatRow,
   StatTile,
 } from "@/components/primitives";
-import { KeepRateBars } from "@/components/dash/bars";
 import { AccountBalances } from "@/components/dash/charts";
 import { Donut } from "@/components/dash/donut";
 import { api } from "@/lib/api";
 import { currency, share, shortDate, signedCurrency } from "@/lib/format";
-import type {
-  Account,
-  AssetBreakdown,
-  KeepRatePoint,
-  TrendPoint,
-} from "@/lib/types";
+import type { Account, AssetBreakdown, TrendPoint } from "@/lib/types";
 
 type Series = { name: string; series: { date: string; balance: number }[] };
 
@@ -36,7 +30,6 @@ export default function TrendsPage() {
 function TrendsContent() {
   const [trend, setTrend] = useState<TrendPoint[]>([]);
   const [balances, setBalances] = useState<Series[]>([]);
-  const [keep, setKeep] = useState<KeepRatePoint[]>([]);
   const [assets, setAssets] = useState<AssetBreakdown | null>(null);
   const [accounts, setAccounts] = useState<Account[]>([]);
 
@@ -44,7 +37,6 @@ function TrendsContent() {
     const soft = () => {};
     api<TrendPoint[]>("/metrics/trend?n=8").then(setTrend).catch(soft);
     api<Series[]>("/metrics/balance-trends").then(setBalances).catch(soft);
-    api<KeepRatePoint[]>("/metrics/keep-rate?n=12").then(setKeep).catch(soft);
     api<AssetBreakdown>("/metrics/assets").then(setAssets).catch(soft);
     api<Account[]>("/accounts").then(setAccounts).catch(soft);
   }, []);
@@ -188,10 +180,15 @@ function TrendsContent() {
       <Split>
         <div className="px-8 pb-[30px] pt-[26px]">
           <ModuleHead
-            title="Keep rate"
-            subtitle="Share of gross that stays yours — 401(k) plus cash left over."
+            title="Assets and liabilities"
+            subtitle="Every account by size; liabilities in red, net worth in the center."
           />
-          <KeepRateBars data={keep} />
+          <Donut
+            data={assetSlices}
+            centerLabel="Net worth"
+            centerValue={currency(netWorth)}
+            emptyHint="No accounts yet."
+          />
         </div>
         <div className="px-8 pb-[30px] pt-[26px]">
           <ModuleHead
@@ -201,19 +198,6 @@ function TrendsContent() {
           <AccountBalances data={balances} />
         </div>
       </Split>
-
-      <Module>
-        <ModuleHead
-          title="Assets and liabilities"
-          subtitle="Every account by size; liabilities in red, net worth in the center."
-        />
-        <Donut
-          data={assetSlices}
-          centerLabel="Net worth"
-          centerValue={currency(netWorth)}
-          emptyHint="No accounts yet."
-        />
-      </Module>
     </>
   );
 }

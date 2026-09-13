@@ -11,10 +11,11 @@ import {
   StatRow,
   StatTile,
 } from "@/components/primitives";
-import { KeepRateBars, TierLegend, TierStackedBars } from "@/components/dash/bars";
-import { AccountBalances, AssetsLiabilities } from "@/components/dash/charts";
+import { KeepRateBars } from "@/components/dash/bars";
+import { AccountBalances } from "@/components/dash/charts";
+import { Donut } from "@/components/dash/donut";
 import { api } from "@/lib/api";
-import { currency, share, signedCurrency } from "@/lib/format";
+import { currency, share, shortDate, signedCurrency } from "@/lib/format";
 import type {
   Account,
   AssetBreakdown,
@@ -83,6 +84,40 @@ function TrendsContent() {
     return last - first;
   }, [balances]);
 
+  // Most recent completed period, for the by-tier donut.
+  const latestPeriod = useMemo(
+    () =>
+      trend.length
+        ? [...trend].sort((a, b) => b.period_start.localeCompare(a.period_start))[0]
+        : null,
+    [trend],
+  );
+
+  const tierSlices = useMemo(
+    () =>
+      latestPeriod
+        ? [
+            { label: "Fixed", value: latestPeriod.by_tier?.fixed ?? 0, color: "#3b4250" },
+            { label: "Essentials", value: latestPeriod.by_tier?.essential ?? 0, color: "#6d7686" },
+            { label: "Discretionary", value: latestPeriod.by_tier?.discretionary ?? 0, color: "#ff6b6b" },
+          ]
+        : [],
+    [latestPeriod],
+  );
+
+  const assetSlices = useMemo(
+    () =>
+      [...accounts]
+        .filter((a) => a.current_balance !== 0)
+        .sort((a, b) => Math.abs(b.current_balance) - Math.abs(a.current_balance))
+        .map((a) => ({
+          label: a.name,
+          value: Math.abs(a.current_balance),
+          color: a.current_balance < 0 ? "#ff6b6b" : undefined,
+        })),
+    [accounts],
+  );
+
   return (
     <>
       <PageHead
@@ -135,11 +170,19 @@ function TrendsContent() {
 
       <Module>
         <ModuleHead
-          title="Spending per pay period, by tier"
-          subtitle="Fixed and essentials barely move. Discretionary is what makes a period expensive."
-          right={<TierLegend average={trend[0]?.average ?? 0} />}
+          title="This period's spending by tier"
+          subtitle={
+            latestPeriod
+              ? `${shortDate(latestPeriod.period_start)} – ${shortDate(latestPeriod.period_end)} · fixed vs essentials vs discretionary`
+              : "No completed periods yet."
+          }
         />
-        <TierStackedBars data={trend} />
+        <Donut
+          data={tierSlices}
+          centerLabel="spent"
+          centerValue={latestPeriod ? currency(latestPeriod.total) : undefined}
+          emptyHint="No completed periods yet."
+        />
       </Module>
 
       <Split>
@@ -162,13 +205,13 @@ function TrendsContent() {
       <Module>
         <ModuleHead
           title="Assets and liabilities"
-          subtitle="Every account as a share of net worth."
+          subtitle="Every account by size; liabilities in red, net worth in the center."
         />
-        <AssetsLiabilities
-          accounts={accounts.map((a) => ({
-            name: a.name,
-            balance: a.current_balance,
-          }))}
+        <Donut
+          data={assetSlices}
+          centerLabel="Net worth"
+          centerValue={currency(netWorth)}
+          emptyHint="No accounts yet."
         />
       </Module>
     </>

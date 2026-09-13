@@ -10,7 +10,8 @@ import {
   StatRow,
   StatTile,
 } from "@/components/primitives";
-import { DeviationRows, MerchantRows } from "@/components/dash/rows";
+import { MerchantRows } from "@/components/dash/rows";
+import { Donut } from "@/components/dash/donut";
 import { PaceChart } from "@/components/dash/charts";
 import { TransactionsTable } from "@/components/dash/TransactionsTable";
 import { api } from "@/lib/api";
@@ -77,6 +78,20 @@ function SpendingContent() {
       average: avgs[c.category] ?? 0,
     }));
   }, [active]);
+
+  const catSlices = useMemo(
+    () =>
+      [...deviations]
+        .filter((d) => d.value > 0)
+        .sort((a, b) => b.value - a.value)
+        .slice(0, 10)
+        .map((d) => ({
+          label: d.label,
+          value: d.value,
+          sub: `avg ${currency(d.average)}`,
+        })),
+    [deviations],
+  );
 
   const biggest = useMemo(() => {
     if (!deviations.length) return null;
@@ -159,10 +174,15 @@ function SpendingContent() {
       >
         <div className="px-8 pb-[30px] pt-[26px]">
           <ModuleHead
-            title="Every category against its average"
-            subtitle="Bar is this period. Tick is the six-period average. Sorted by how far off you are."
+            title="Every category, by its average"
+            subtitle="This period by category; each legend row shows its six-period average."
           />
-          <DeviationRows rows={deviations} />
+          <Donut
+            data={catSlices}
+            centerLabel="spent"
+            centerValue={active ? currency(active.total) : undefined}
+            emptyHint="No spending yet this period."
+          />
         </div>
         <div className="px-8 pb-[30px] pt-[26px]">
           <ModuleHead

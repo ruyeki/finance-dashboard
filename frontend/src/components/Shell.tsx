@@ -5,13 +5,13 @@ import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
 import { api, ApiError, NetworkError } from "@/lib/api";
 import { daysUntil, relativeDays, weekdayDate } from "@/lib/format";
-import type { Account, Paycheck, SpendingSummary } from "@/lib/types";
+import type { Account, SpendingSummary } from "@/lib/types";
 
 type NavItem = {
   href: string;
   label: string;
   hint?: string;
-  countOf?: "accounts" | "paychecks";
+  countOf?: "accounts";
 };
 
 const NAV: NavItem[] = [
@@ -21,7 +21,6 @@ const NAV: NavItem[] = [
   { href: "/stocks", label: "Stocks", hint: "•" },
   { href: "/reports", label: "Reports", hint: "AI" },
   { href: "/accounts", label: "Accounts", countOf: "accounts" },
-  { href: "/paychecks", label: "Paychecks", countOf: "paychecks" },
   { href: "/settings", label: "Settings" },
 ];
 
@@ -55,7 +54,7 @@ export default function Shell({
   const [ready, setReady] = useState(false);
   const [unreachable, setUnreachable] = useState<string | null>(null);
   const [summary, setSummary] = useState<SpendingSummary | null>(null);
-  const [counts, setCounts] = useState<{ accounts?: number; paychecks?: number }>({});
+  const [counts, setCounts] = useState<{ accounts?: number }>({});
   const [env, setEnv] = useState<string | null>(null);
 
   useEffect(() => {
@@ -82,17 +81,15 @@ export default function Shell({
     if (!ready) return;
     let live = true;
     void (async () => {
-      const [s, a, p, h] = await Promise.allSettled([
+      const [s, a, h] = await Promise.allSettled([
         api<SpendingSummary>("/metrics/spending"),
         api<Account[]>("/accounts"),
-        api<Paycheck[]>("/paychecks"),
         api<{ plaid_env?: string }>("/health"),
       ]);
       if (!live) return;
       if (s.status === "fulfilled") setSummary(s.value);
       setCounts({
         accounts: a.status === "fulfilled" ? a.value.length : undefined,
-        paychecks: p.status === "fulfilled" ? p.value.length : undefined,
       });
       if (h.status === "fulfilled" && h.value.plaid_env) setEnv(h.value.plaid_env);
     })();

@@ -14,7 +14,8 @@ import {
 } from "@/components/primitives";
 import { NetWorthArea } from "@/components/dash/charts";
 import { BandRow, type Band } from "@/components/dash/BandRow";
-import { DeviationRows, MerchantRows } from "@/components/dash/rows";
+import { MerchantRows } from "@/components/dash/rows";
+import { Donut } from "@/components/dash/donut";
 import {
   buildInsights,
   RecurringList,
@@ -102,6 +103,20 @@ function OverviewContent() {
       average: avgs[c.category] ?? 0,
     }));
   }, [summary]);
+
+  const catSlices = useMemo(
+    () =>
+      [...deviations]
+        .filter((d) => d.value > 0)
+        .sort((a, b) => b.value - a.value)
+        .slice(0, 9)
+        .map((d) => ({
+          label: d.label,
+          value: d.value,
+          sub: `avg ${currency(d.average)}`,
+        })),
+    [deviations],
+  );
 
   const insights = useMemo(() => buildInsights(summary, goals), [summary, goals]);
 
@@ -209,10 +224,15 @@ function OverviewContent() {
       <Split>
         <div className="px-8 pb-[30px] pt-[26px]">
           <ModuleHead
-            title="Where it went, vs your average"
-            subtitle="Tick marks the six-period average for the same point in the period."
+            title="Where it went"
+            subtitle="This period by category; each row shows its average."
           />
-          <DeviationRows rows={deviations} limit={8} />
+          <Donut
+            data={catSlices}
+            centerLabel="spent"
+            centerValue={summary ? currency(summary.total) : undefined}
+            emptyHint="No spending yet this period."
+          />
         </div>
         <div className="px-8 pb-[30px] pt-[26px]">
           <ModuleHead title="Top merchants" subtitle="This period, by total spent." />

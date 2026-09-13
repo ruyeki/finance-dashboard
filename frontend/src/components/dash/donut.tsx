@@ -63,6 +63,10 @@ export function Donut({
               outerRadius={dim.outer}
               paddingAngle={1.5}
               stroke="none"
+              isAnimationActive
+              animationBegin={80}
+              animationDuration={800}
+              animationEasing="ease-out"
             >
               {slices.map((s, i) => (
                 <Cell key={i} fill={color(s, i)} />

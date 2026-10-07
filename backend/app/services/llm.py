@@ -184,36 +184,44 @@ PAYSTUB_FIELDS = {
 }
 
 
-REPORT_PROMPT = """You are a sharp, encouraging personal-finance analyst writing a
-report for one person about their most recent pay period. You are given a JSON
-object with the real figures for this period and the previous one, their
+REPORT_PROMPT = """You are a sharp, insightful personal-finance analyst writing a
+detailed report for one person about their most recent pay period. You are given
+a JSON object with the real figures for this period and the previous one, their
 investment portfolio, and retirement-goal progress.
 
-Write a concise, specific report. Rules:
+Write a thorough, specific, genuinely useful report. Go deep — the reader wants
+real analysis, not a summary. Rules:
 - Use ONLY the numbers provided. Never invent figures. Round dollars sensibly.
-- Be concrete: name actual categories and merchants and cite their amounts.
+- Be concrete and exhaustive: name EVERY notable category and merchant and cite
+  their amounts. Walk through where the money actually went, biggest first.
+- Explain the "why" and the trade-offs, not just the "what". Point out patterns,
+  surprises, and anything that moved a lot versus last period.
 - Be honest but constructive. If they overspent, say so plainly, then help.
-- Cut-back suggestions must target real categories/merchants from the data, with
-  a realistic monthly-dollar impact.
-- Keep each text field tight (1-4 sentences). No markdown, no preamble.
+- Cut-back suggestions must target real categories/merchants from the data, each
+  with a realistic monthly-dollar impact and a specific, actionable step.
+- Write in full, flowing sentences with real detail. Do NOT be terse. No
+  markdown, no preamble.
 
 Return a JSON object with exactly these keys:
 {
-  "headline": "one punchy sentence summarizing the period",
-  "spending": "2-4 sentences on where the money went, with amounts",
+  "headline": "one punchy, specific sentence summarizing the period",
+  "spending": "4-6 sentences walking through where the money went, category by
+    category, with amounts — cover every notable line, not just the top one",
   "comparison": {
     "direction": "improved" | "worse" | "similar",
-    "note": "1-2 sentences comparing spending to last period, with the numbers"
+    "note": "3-5 sentences comparing this period to last, with the numbers and
+      what drove the change"
   },
-  "wins": ["1-3 short positive observations, if any"],
+  "wins": ["at least 2-3 specific positive observations, each with the number behind it"],
   "cutbacks": [
-    {"target": "category or merchant", "suggestion": "specific action", "monthly_impact": number}
+    {"target": "category or merchant", "suggestion": "specific, actionable step", "monthly_impact": number}
   ],
-  "portfolio": "2-3 sentences: total invested, how it moved vs the S&P 500 this period, and retirement-goal progress",
-  "actions": ["2-3 concrete next steps"]
+  "portfolio": "4-6 sentences: total invested, how it moved vs the S&P 500 this
+    period, allocation observations, and retirement-goal progress with the math",
+  "actions": ["at least 3-4 concrete, prioritized next steps"]
 }
 
-Here is the data:
+Give at least 3 cutbacks and at least 3 actions. Here is the data:
 """
 
 
@@ -232,9 +240,10 @@ _REPORT_SCHEMA = {
             },
             "required": ["direction", "note"],
         },
-        "wins": {"type": "array", "items": {"type": "string"}},
+        "wins": {"type": "array", "items": {"type": "string"}, "minItems": 2},
         "cutbacks": {
             "type": "array",
+            "minItems": 3,
             "items": {
                 "type": "object",
                 "properties": {
@@ -246,7 +255,7 @@ _REPORT_SCHEMA = {
             },
         },
         "portfolio": {"type": "string"},
-        "actions": {"type": "array", "items": {"type": "string"}},
+        "actions": {"type": "array", "items": {"type": "string"}, "minItems": 3},
     },
     "required": [
         "headline", "spending", "comparison", "wins", "cutbacks", "portfolio", "actions",
@@ -265,7 +274,7 @@ def analyze_finances(context: dict) -> dict:
         REPORT_PROMPT + json.dumps(context, default=str),
         fmt=_REPORT_SCHEMA,
         think=True,
-        temperature=0.3,
+        temperature=0.5,
     )
     return _parse_json(text)
 

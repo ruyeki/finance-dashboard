@@ -1,34 +1,81 @@
-"""Gemini (Google AI Studio) client for transaction classification + paystub parsing.
+"""Local LLM client (Ollama) for transaction classification, paystub parsing,
+and period reports.
 
-Degrades gracefully: if GEMINI_API_KEY is unset, classification returns
-"Uncategorized" and paystub parsing raises a clear error.
+Talks to an Ollama server (default http://localhost:11434) running a text model
+(default qwen3:4b). No API key is needed — the model runs locally.
+
+Degrades gracefully: classification falls back to "Uncategorized" if the model
+is unreachable; report/paystub calls raise a clear error.
 """
 
 import json
 import logging
-from functools import lru_cache
+import re
+
+import requests
 
 from app.categories import CATEGORIES
 from app.config import settings
 
 logger = logging.getLogger(__name__)
 
+CHUNK_SIZE = 40  # keep each response well under what a small model handles cleanly
+
+_THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
+
 
 def is_enabled() -> bool:
-    return bool(settings.gemini_api_key)
+    # The model is local; there's no key to gate on. Callers still use this to
+    # decide whether to attempt a call — treat a configured host as enabled.
+    return bool(settings.ollama_host and settings.ollama_model)
 
 
-@lru_cache
-def _client():
-    # Cached so the client (and its underlying HTTP connection) isn't garbage
-    # collected between creation and use — a temporary would raise
-    # "Cannot send a request, as the client has been closed".
-    from google import genai
+def _generate(prompt: str, *, temperature: float = 0.0) -> str:
+    """Call Ollama's /api/generate and return the raw text response.
 
-    return genai.Client(api_key=settings.gemini_api_key)
+    Raises RuntimeError if the server can't be reached, so callers can surface a
+    clear message instead of a bare ConnectionError.
+    """
+    try:
+        resp = requests.post(
+            f"{settings.ollama_host}/api/generate",
+            json={
+                "model": settings.ollama_model,
+                "prompt": prompt,
+                "stream": False,
+                "format": "json",
+                # qwen3 and other reasoning models emit <think> blocks; turn that
+                # off so the response is just the JSON. Ignored by models that
+                # don't support it.
+                "think": False,
+                "options": {"temperature": temperature},
+            },
+            timeout=settings.ollama_timeout,
+        )
+        resp.raise_for_status()
+    except requests.RequestException as exc:
+        raise RuntimeError(
+            f"Cannot reach the local model at {settings.ollama_host} "
+            f"(model {settings.ollama_model}). Is Ollama running?"
+        ) from exc
+    return resp.json().get("response", "")
 
 
-CHUNK_SIZE = 40  # keep each response well under output-token limits
+def _parse_json(text: str):
+    """Parse model output into JSON, tolerating stray <think> blocks or prose
+    around the JSON that a small model sometimes adds despite format=json."""
+    cleaned = _THINK_RE.sub("", text).strip()
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
+        pass
+    # Fall back to the first {...} object or [...] array in the text.
+    for open_c, close_c in (("{", "}"), ("[", "]")):
+        start = cleaned.find(open_c)
+        end = cleaned.rfind(close_c)
+        if start != -1 and end > start:
+            return json.loads(cleaned[start : end + 1])
+    raise ValueError(f"Model did not return JSON: {cleaned[:200]!r}")
 
 
 _NON_SPEND_LABELS = {"Uncategorized", "Transfer", "Income", "Investments"}
@@ -45,12 +92,7 @@ def _classify_chunk(descriptions: list[str]) -> list[str]:
         "for every input line. Use the closest category; if truly unclear use "
         "\"Uncategorized\".\n\nTransactions:\n" + numbered
     )
-    resp = _client().models.generate_content(
-        model=settings.gemini_model,
-        contents=prompt,
-        config={"response_mime_type": "application/json"},
-    )
-    data = json.loads(resp.text)
+    data = _parse_json(_generate(prompt))
     result = ["Uncategorized"] * len(descriptions)
     valid = set(CATEGORIES)
     for row in data:
@@ -65,7 +107,7 @@ def classify_merchants(descriptions: list[str]) -> list[str]:
     """Map each merchant/description string to one of CATEGORIES.
 
     Processes in small chunks so large batches don't overflow the response.
-    Returns "Uncategorized" for everything when Gemini is not configured.
+    Returns "Uncategorized" for a chunk if the model fails or is unreachable.
     """
     if not descriptions:
         return []
@@ -78,7 +120,7 @@ def classify_merchants(descriptions: list[str]) -> list[str]:
         try:
             out.extend(_classify_chunk(chunk))
         except Exception as exc:  # noqa: BLE001
-            logger.warning("Gemini classification failed for a chunk: %s", exc)
+            logger.warning("Local-model classification failed for a chunk: %s", exc)
             out.extend(["Uncategorized"] * len(chunk))
     return out
 
@@ -132,35 +174,37 @@ Here is the data:
 
 def analyze_finances(context: dict) -> dict:
     """Produce a structured finance report from a period's figures."""
-    if not is_enabled():
-        raise RuntimeError("GEMINI_API_KEY is not set; cannot generate reports.")
-    resp = _client().models.generate_content(
-        model=settings.gemini_model,
-        contents=REPORT_PROMPT + json.dumps(context, default=str),
-        config={"response_mime_type": "application/json"},
+    text = _generate(
+        REPORT_PROMPT + json.dumps(context, default=str), temperature=0.3
     )
-    return json.loads(resp.text)
+    return _parse_json(text)
 
 
 def parse_paystub(pdf_bytes: bytes) -> dict:
-    """Extract a structured paycheck breakdown from a paystub PDF."""
-    if not is_enabled():
-        raise RuntimeError("GEMINI_API_KEY is not set; cannot parse paystubs.")
+    """Extract a structured paycheck breakdown from a paystub PDF.
 
-    from google.genai import types
+    qwen3 is text-only, so we extract the PDF text with pypdf first. A scanned
+    (image-only) paystub yields no text and raises — there's no OCR here.
+    """
+    from io import BytesIO
+
+    from pypdf import PdfReader
+
+    reader = PdfReader(BytesIO(pdf_bytes))
+    text = "\n".join(page.extract_text() or "" for page in reader.pages).strip()
+    if not text:
+        raise RuntimeError(
+            "No text found in this PDF. If it's a scanned image, the local "
+            "model can't read it — upload a text-based paystub."
+        )
 
     fields_desc = "\n".join(f"- {k}: {v}" for k, v in PAYSTUB_FIELDS.items())
     prompt = (
-        "Extract the current-period pay breakdown from this paystub. "
+        "Extract the current-period pay breakdown from this paystub text. "
         "Return a single JSON object with exactly these keys:\n"
         f"{fields_desc}\n\n"
         "Use current-period amounts (not year-to-date). Numbers only for money "
-        "fields (no $ or commas). If a field is absent, use 0 (or null for employer)."
+        "fields (no $ or commas). If a field is absent, use 0 (or null for "
+        "employer).\n\nPaystub text:\n" + text
     )
-    part = types.Part.from_bytes(data=pdf_bytes, mime_type="application/pdf")
-    resp = _client().models.generate_content(
-        model=settings.gemini_model,
-        contents=[prompt, part],
-        config={"response_mime_type": "application/json"},
-    )
-    return json.loads(resp.text)
+    return _parse_json(_generate(prompt))

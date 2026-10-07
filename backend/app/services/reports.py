@@ -6,7 +6,7 @@ from sqlmodel import Session, select
 
 from app.config import settings
 from app.models import Report
-from app.services import gemini, holdings, metrics, payperiods
+from app.services import holdings, llm, metrics, payperiods
 
 
 def build_context(session: Session, as_of: dt.date) -> tuple[dict, dict]:
@@ -69,7 +69,7 @@ def generate(session: Session, as_of: dt.date | None = None) -> Report:
     if as_of is None:
         as_of = last_completed_period_as_of(session)
     context, summ = build_context(session, as_of)
-    result = gemini.analyze_finances(context)
+    result = llm.analyze_finances(context)
 
     start = dt.date.fromisoformat(summ["period_start"])
     end = dt.date.fromisoformat(summ["period_end"])
@@ -79,7 +79,7 @@ def generate(session: Session, as_of: dt.date | None = None) -> Report:
     report.period_end = end
     report.content = result
     report.headline = str(result.get("headline", ""))[:400]
-    report.model = settings.gemini_model
+    report.model = settings.ollama_model
     report.generated_at = dt.datetime.now(dt.timezone.utc)
     session.add(report)
     session.commit()
@@ -109,6 +109,6 @@ def generate_for_completed_period(session: Session) -> Report | None:
     prev_start, _ = payperiods.period_for_date(prev_day, cadence, anchor)
     if session.exec(select(Report).where(Report.period_start == prev_start)).first():
         return None  # already generated
-    if not gemini.is_enabled():
+    if not llm.is_enabled():
         return None
     return generate(session, prev_day)

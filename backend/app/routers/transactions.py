@@ -66,12 +66,12 @@ def update_transaction(
 
 @router.post("/categorize")
 def run_categorization(session: Session = Depends(get_session)) -> dict:
-    """Batch-classify uncategorized transactions with Gemini (if configured)."""
+    """Batch-classify uncategorized transactions with the local model."""
     updated = categorize.categorize_uncategorized(session)
     return {"updated": updated}
 
 
 @router.post("/reclassify")
 def reclassify(session: Session = Depends(get_session)) -> dict:
-    """Re-run transfer detection + rules (+ Gemini) over all transactions."""
+    """Re-run transfer detection + rules over all transactions."""
     return categorize.reclassify_all(session)

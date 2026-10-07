@@ -10,7 +10,7 @@ from app.db import get_session
 from app.models import Paycheck
 from app.schemas import PaycheckCreate, PaycheckUpdate
 from app.security import AuthDep
-from app.services import gemini
+from app.services import llm
 
 router = APIRouter(prefix="/paychecks", tags=["paychecks"], dependencies=[AuthDep])
 
@@ -24,11 +24,11 @@ def list_paychecks(session: Session = Depends(get_session)) -> list[Paycheck]:
 async def upload_paystub(
     file: UploadFile = File(...), session: Session = Depends(get_session)
 ) -> Paycheck:
-    if not gemini.is_enabled():
+    if not llm.is_enabled():
         raise HTTPException(
             400,
-            "GEMINI_API_KEY is not configured. Add it to parse paystubs, "
-            "or add the paycheck manually.",
+            "The local model is not configured. Set OLLAMA_HOST/OLLAMA_MODEL to "
+            "parse paystubs, or add the paycheck manually.",
         )
     data = await file.read()
 
@@ -39,7 +39,7 @@ async def upload_paystub(
         f.write(data)
 
     try:
-        parsed = gemini.parse_paystub(data)
+        parsed = llm.parse_paystub(data)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(422, f"Could not parse paystub: {exc}")
 

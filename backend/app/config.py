@@ -30,9 +30,12 @@ class Settings(BaseSettings):
     plaid_country_codes: str = "US"
     plaid_webhook_url: str = ""
 
-    # Gemini
-    gemini_api_key: str = ""
-    gemini_model: str = "gemini-3.6-flash"
+    # Local LLM (Ollama). Used for transaction classification, paystub parsing,
+    # and period reports. No API key needed — the model runs on this machine.
+    ollama_host: str = "http://localhost:11434"
+    ollama_model: str = "qwen3:4b"
+    # Seconds to wait on a single generation (reports can be slow on a small box).
+    ollama_timeout: int = 300
 
     # CORS
     frontend_origin: str = "http://localhost:3000"

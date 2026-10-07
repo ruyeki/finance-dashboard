@@ -6,7 +6,7 @@ from sqlmodel import Session
 from app.db import get_session
 from app.models import Report
 from app.security import AuthDep
-from app.services import emailer, gemini, reports
+from app.services import emailer, llm, reports
 
 router = APIRouter(prefix="/reports", tags=["reports"], dependencies=[AuthDep])
 
@@ -34,8 +34,8 @@ def latest(session: Session = Depends(get_session)) -> Report | None:
 def generate(
     as_of: dt.date | None = None, session: Session = Depends(get_session)
 ) -> Report:
-    if not gemini.is_enabled():
-        raise HTTPException(400, "GEMINI_API_KEY is not configured.")
+    if not llm.is_enabled():
+        raise HTTPException(400, "The local model is not configured.")
     try:
         return reports.generate(session, as_of)
     except Exception as exc:  # noqa: BLE001

@@ -1,4 +1,4 @@
-"""Categorization pipeline: rules -> Plaid category -> Gemini fallback."""
+"""Categorization pipeline: rules -> Plaid category -> local-model fallback."""
 
 import re
 
@@ -6,7 +6,7 @@ from sqlmodel import Session, select
 
 from app.categories import map_plaid_category
 from app.models import CategoryRule, CategorySource, MatchType, Transaction
-from app.services import gemini
+from app.services import llm
 
 
 # Descriptions that indicate money moving between accounts / people rather than
@@ -174,7 +174,7 @@ def categorize_from_plaid(
 ) -> tuple[str, CategorySource]:
     """Return (category, source) using rules then the Plaid category.
 
-    Leaves Gemini for a separate batch pass (see categorize_uncategorized).
+    Leaves the local model for a batch pass (see categorize_uncategorized).
     """
     rule_cat = apply_rules(session, text)
     if rule_cat:
@@ -188,11 +188,11 @@ def categorize_from_plaid(
 
 
 def categorize_uncategorized(session: Session, limit: int = 1000) -> int:
-    """Batch-classify remaining uncategorized transactions with Gemini.
+    """Batch-classify remaining uncategorized transactions with the local model.
 
-    No-op (returns 0) when Gemini isn't configured. Returns count updated.
+    No-op (returns 0) when the model isn't configured. Returns count updated.
     """
-    if not gemini.is_enabled():
+    if not llm.is_enabled():
         return 0
 
     txns = session.exec(
@@ -205,7 +205,7 @@ def categorize_uncategorized(session: Session, limit: int = 1000) -> int:
         return 0
 
     descriptions = [t.merchant_name or t.raw_name for t in txns]
-    categories = gemini.classify_merchants(descriptions)
+    categories = llm.classify_merchants(descriptions)
 
     updated = 0
     for txn, cat in zip(txns, categories):
@@ -221,7 +221,7 @@ def categorize_uncategorized(session: Session, limit: int = 1000) -> int:
 def reclassify_all(session: Session) -> dict:
     """Re-run transfer detection + rules over all non-manual transactions.
 
-    Safe to run anytime (after adding rules, a Gemini key, or new heuristics).
+    Safe to run anytime (after adding rules or new heuristics).
     Never overrides a manual categorization.
     """
     txns = session.exec(select(Transaction)).all()
@@ -255,7 +255,7 @@ def reclassify_all(session: Session) -> dict:
             card_payments += 1
             continue
         # Not a transfer: it counts as spending. Clear any stale transfer flag
-        # and reset auto-set categories so Gemini/rules can reclassify.
+        # and reset auto-set categories so the model/rules can reclassify.
         txn.is_transfer = False
         if txn.category_source in (CategorySource.rule, CategorySource.uncategorized) and txn.category in ("Transfer", "Uncategorized"):
             txn.category = "Uncategorized"

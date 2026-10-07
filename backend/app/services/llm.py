@@ -30,8 +30,13 @@ def is_enabled() -> bool:
     return bool(settings.ollama_host and settings.ollama_model)
 
 
-def _generate(prompt: str, *, temperature: float = 0.0) -> str:
-    """Call Ollama's /api/generate and return the raw text response.
+def _generate(prompt: str, *, fmt="json", temperature: float = 0.0) -> str:
+    """Call Ollama's /api/generate and return the response text.
+
+    `fmt` is either "json" or a JSON-schema dict (Ollama structured outputs).
+    Thinking is left ON: qwen3 classifies and reasons far better with it, and
+    Ollama returns clean output in `response` (the reasoning goes to a separate
+    `thinking` field). With think off it emits garbage under a JSON grammar.
 
     Raises RuntimeError if the server can't be reached, so callers can surface a
     clear message instead of a bare ConnectionError.
@@ -43,11 +48,8 @@ def _generate(prompt: str, *, temperature: float = 0.0) -> str:
                 "model": settings.ollama_model,
                 "prompt": prompt,
                 "stream": False,
-                "format": "json",
-                # qwen3 and other reasoning models emit <think> blocks; turn that
-                # off so the response is just the JSON. Ignored by models that
-                # don't support it.
-                "think": False,
+                "format": fmt,
+                "think": True,
                 "options": {"temperature": temperature},
             },
             timeout=settings.ollama_timeout,
@@ -95,7 +97,10 @@ def _classify_chunk(descriptions: list[str]) -> list[str]:
         'category; if truly unclear use "Uncategorized".\n\nTransactions:\n'
         + numbered
     )
-    data = _parse_json(_generate(prompt))
+    # A schema with an enum guarantees every returned string is a real category,
+    # in order — the most reliable shape for a small model.
+    schema = {"type": "array", "items": {"type": "string", "enum": list(CATEGORIES)}}
+    data = _parse_json(_generate(prompt, fmt=schema))
     return _coerce_categories(data, descriptions)
 
 

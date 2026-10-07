@@ -30,13 +30,14 @@ def is_enabled() -> bool:
     return bool(settings.ollama_host and settings.ollama_model)
 
 
-def _generate(prompt: str, *, fmt="json", temperature: float = 0.0) -> str:
+def _generate(prompt: str, *, fmt="json", think: bool = True, temperature: float = 0.0) -> str:
     """Call Ollama's /api/generate and return the response text.
 
     `fmt` is either "json" or a JSON-schema dict (Ollama structured outputs).
-    Thinking is left ON: qwen3 classifies and reasons far better with it, and
-    Ollama returns clean output in `response` (the reasoning goes to a separate
-    `thinking` field). With think off it emits garbage under a JSON grammar.
+    Thinking defaults ON: qwen3 classifies and reasons far better with it, and
+    Ollama returns clean output in `response` (reasoning goes to a separate
+    `thinking` field). Turn it off only with a schema `fmt` — qwen3 emits garbage
+    with think off under the plain "json" grammar, but a schema keeps it valid.
 
     Raises RuntimeError if the server can't be reached, so callers can surface a
     clear message instead of a bare ConnectionError.
@@ -49,7 +50,7 @@ def _generate(prompt: str, *, fmt="json", temperature: float = 0.0) -> str:
                 "prompt": prompt,
                 "stream": False,
                 "format": fmt,
-                "think": True,
+                "think": think,
                 "options": {"temperature": temperature},
             },
             timeout=settings.ollama_timeout,
@@ -216,10 +217,53 @@ Here is the data:
 """
 
 
+# Report shape, as a JSON schema. Pairing this with think-off keeps the output
+# valid and fast (qwen3 needs a schema to stay coherent without thinking).
+_REPORT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "headline": {"type": "string"},
+        "spending": {"type": "string"},
+        "comparison": {
+            "type": "object",
+            "properties": {
+                "direction": {"type": "string", "enum": ["improved", "worse", "similar"]},
+                "note": {"type": "string"},
+            },
+            "required": ["direction", "note"],
+        },
+        "wins": {"type": "array", "items": {"type": "string"}},
+        "cutbacks": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "target": {"type": "string"},
+                    "suggestion": {"type": "string"},
+                    "monthly_impact": {"type": "number"},
+                },
+                "required": ["target", "suggestion", "monthly_impact"],
+            },
+        },
+        "portfolio": {"type": "string"},
+        "actions": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": [
+        "headline", "spending", "comparison", "wins", "cutbacks", "portfolio", "actions",
+    ],
+}
+
+
 def analyze_finances(context: dict) -> dict:
-    """Produce a structured finance report from a period's figures."""
+    """Produce a structured finance report from a period's figures.
+
+    Runs with thinking OFF for speed; the schema keeps the output valid.
+    """
     text = _generate(
-        REPORT_PROMPT + json.dumps(context, default=str), temperature=0.3
+        REPORT_PROMPT + json.dumps(context, default=str),
+        fmt=_REPORT_SCHEMA,
+        think=False,
+        temperature=0.3,
     )
     return _parse_json(text)
 

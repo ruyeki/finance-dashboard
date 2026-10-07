@@ -35,8 +35,8 @@ class Settings(BaseSettings):
     ollama_host: str = "http://localhost:11434"
     ollama_model: str = "qwen3:4b"
     # Seconds to wait on a single generation. Reports run with thinking on and
-    # can take many minutes on a small box, so this is generous (1 hour).
-    ollama_timeout: int = 3600
+    # can take a long time on a small box, so this is very generous (6 hours).
+    ollama_timeout: int = 21600
 
     # CORS
     frontend_origin: str = "http://localhost:3000"

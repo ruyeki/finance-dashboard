@@ -84,22 +84,61 @@ _NON_SPEND_LABELS = {"Uncategorized", "Transfer", "Income", "Investments"}
 def _classify_chunk(descriptions: list[str]) -> list[str]:
     allowed = ", ".join(c for c in CATEGORIES if c not in _NON_SPEND_LABELS)
     numbered = "\n".join(f"{i}: {d}" for i, d in enumerate(descriptions))
+    n = len(descriptions)
     prompt = (
         "You are a personal-finance transaction classifier. "
-        "Assign each transaction description to exactly one of these categories:\n"
+        "Assign each transaction to exactly one of these categories:\n"
         f"{allowed}\n\n"
-        "Return a JSON array of objects like {\"i\": <index>, \"category\": <category>} "
-        "for every input line. Use the closest category; if truly unclear use "
-        "\"Uncategorized\".\n\nTransactions:\n" + numbered
+        f"Return ONLY a JSON array of exactly {n} strings — one category per "
+        "transaction, in the same order as the numbered list below. Example for "
+        '3 inputs: ["Groceries", "Dining", "Transportation"]. Use the closest '
+        'category; if truly unclear use "Uncategorized".\n\nTransactions:\n'
+        + numbered
     )
     data = _parse_json(_generate(prompt))
+    return _coerce_categories(data, descriptions)
+
+
+def _coerce_categories(data, descriptions: list[str]) -> list[str]:
+    """Map a model's (often loosely-shaped) JSON into one category per input.
+
+    Small models return any of: a positional list of strings, a list of
+    {"i","category"} objects, or a dict keyed by index or by description. Handle
+    them all; anything unrecognised stays "Uncategorized".
+    """
     result = ["Uncategorized"] * len(descriptions)
     valid = set(CATEGORIES)
-    for row in data:
-        i = int(row["i"])
-        cat = row["category"]
-        if 0 <= i < len(result) and cat in valid:
-            result[i] = cat
+
+    def put(idx, cat) -> None:
+        if isinstance(cat, str) and cat in valid and isinstance(idx, int) and 0 <= idx < len(result):
+            result[idx] = cat
+
+    # A dict wrapping a single list (e.g. {"categories": [...]}) -> use the list.
+    if isinstance(data, dict):
+        inner = next((v for v in data.values() if isinstance(v, list)), None)
+        if inner is not None:
+            data = inner
+
+    if isinstance(data, dict):
+        # index->category, index->{"category":..}, or description->category.
+        for k, v in data.items():
+            cat = v.get("category") if isinstance(v, dict) else v
+            try:
+                put(int(k), cat)
+            except (TypeError, ValueError):
+                if k in descriptions:
+                    put(descriptions.index(k), cat)
+    elif isinstance(data, list):
+        for pos, row in enumerate(data):
+            if isinstance(row, str):
+                put(pos, row)
+            elif isinstance(row, dict):
+                idx = row.get("i", row.get("index", pos))
+                try:
+                    idx = int(idx)
+                except (TypeError, ValueError):
+                    idx = pos
+                put(idx, row.get("category") or row.get("cat"))
     return result
 
 

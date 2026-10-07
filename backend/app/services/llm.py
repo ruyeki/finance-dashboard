@@ -257,12 +257,14 @@ _REPORT_SCHEMA = {
 def analyze_finances(context: dict) -> dict:
     """Produce a structured finance report from a period's figures.
 
-    Runs with thinking OFF for speed; the schema keeps the output valid.
+    Runs with thinking ON for quality (think-off reports were too shallow); the
+    schema still constrains the final shape so it parses reliably. This is slow
+    on a small box — OLLAMA_TIMEOUT is sized for it.
     """
     text = _generate(
         REPORT_PROMPT + json.dumps(context, default=str),
         fmt=_REPORT_SCHEMA,
-        think=False,
+        think=True,
         temperature=0.3,
     )
     return _parse_json(text)
